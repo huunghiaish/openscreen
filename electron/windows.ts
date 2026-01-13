@@ -123,7 +123,7 @@ export function createEditorWindow(): BrowserWindow {
 
 export function createSourceSelectorWindow(): BrowserWindow {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize
-  
+
   const win = new BrowserWindow({
     width: 620,
     height: 420,
@@ -146,8 +146,40 @@ export function createSourceSelectorWindow(): BrowserWindow {
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL + '?windowType=source-selector')
   } else {
-    win.loadFile(path.join(RENDERER_DIST, 'index.html'), { 
-      query: { windowType: 'source-selector' } 
+    win.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+      query: { windowType: 'source-selector' }
+    })
+  }
+
+  return win
+}
+
+/**
+ * Creates a transparent camera overlay window for live preview during recording.
+ * Positioned with alwaysOnTop for visibility over other windows.
+ */
+export function createCameraOverlayWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 320,
+    height: 240,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    resizable: false,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.mjs'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  if (VITE_DEV_SERVER_URL) {
+    win.loadURL(VITE_DEV_SERVER_URL + '?windowType=camera-overlay')
+  } else {
+    win.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+      query: { windowType: 'camera-overlay' }
     })
   }
 

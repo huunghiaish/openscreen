@@ -54,3 +54,24 @@ export const DEVICE_STORAGE_KEYS = {
   SELECTED_MIC: 'openscreen:selectedMicId',
   SYSTEM_AUDIO_ENABLED: 'openscreen:systemAudioEnabled',
 } as const;
+
+/** Camera overlay position options for preview during recording */
+export type CameraPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+/** Camera overlay size options */
+export type CameraSize = 'small' | 'medium' | 'large';
+
+/** Pixel dimensions for each camera size */
+export const CAMERA_SIZE_PIXELS: Record<CameraSize, { width: number; height: number }> = {
+  small: { width: 160, height: 120 },
+  medium: { width: 240, height: 180 },
+  large: { width: 320, height: 240 },
+};
+
+/** State for camera overlay during recording */
+export interface CameraOverlayState {
+  enabled: boolean;
+  position: CameraPosition;
+  size: CameraSize;
+  deviceId: string | null;
+}

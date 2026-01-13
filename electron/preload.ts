@@ -63,4 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => {
     return ipcRenderer.invoke('get-platform')
   },
+  storeCameraRecording: (videoData: ArrayBuffer, fileName: string) => {
+    return ipcRenderer.invoke('store-camera-recording', videoData, fileName)
+  },
 })

@@ -219,4 +219,16 @@ export function registerIpcHandlers(
   ipcMain.handle('get-platform', () => {
     return process.platform;
   });
+
+  // Store camera recording as separate file during screen recording
+  ipcMain.handle('store-camera-recording', async (_, videoData: ArrayBuffer, fileName: string) => {
+    try {
+      const videoPath = path.join(RECORDINGS_DIR, fileName);
+      await fs.writeFile(videoPath, Buffer.from(videoData));
+      return { success: true, path: videoPath };
+    } catch (error) {
+      console.error('Failed to store camera recording:', error);
+      return { success: false, error: String(error) };
+    }
+  });
 }

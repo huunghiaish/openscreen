@@ -42,6 +42,11 @@ interface Window {
     getPlatform: () => Promise<string>
     hudOverlayHide: () => void;
     hudOverlayClose: () => void;
+    storeCameraRecording: (videoData: ArrayBuffer, fileName: string) => Promise<{
+      success: boolean
+      path?: string
+      error?: string
+    }>
   }
 }
 

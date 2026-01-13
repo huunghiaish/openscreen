@@ -42,5 +42,10 @@ interface Window {
     setCurrentVideoPath: (path: string) => Promise<{ success: boolean }>
     getCurrentVideoPath: () => Promise<{ success: boolean; path?: string }>
     clearCurrentVideoPath: () => Promise<{ success: boolean }>
+    storeCameraRecording: (videoData: ArrayBuffer, fileName: string) => Promise<{
+      success: boolean
+      path?: string
+      error?: string
+    }>
   }
 }

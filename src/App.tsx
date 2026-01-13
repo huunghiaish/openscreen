@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { LaunchWindow } from "./components/launch/LaunchWindow";
 import { SourceSelector } from "./components/launch/SourceSelector";
 import VideoEditor from "./components/video-editor/VideoEditor";
+import { CameraOverlayWindow } from "./components/camera-overlay-window";
 
 export default function App() {
   const [windowType, setWindowType] = useState('');
@@ -24,7 +25,9 @@ export default function App() {
       return <SourceSelector />;
     case 'editor':
       return <VideoEditor />;
-      default:
+    case 'camera-overlay':
+      return <CameraOverlayWindow />;
+    default:
       return (
         <div className="w-full h-full bg-background text-foreground">
           <h1>Openscreen</h1>
