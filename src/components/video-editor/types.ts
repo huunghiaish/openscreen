@@ -119,6 +119,31 @@ export const ZOOM_DEPTH_SCALES: Record<ZoomDepth, number> = {
 
 export const DEFAULT_ZOOM_DEPTH: ZoomDepth = 3;
 
+// Camera PiP types
+export type CameraPipPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+export type CameraPipSize = 'small' | 'medium' | 'large';
+
+export interface CameraPipConfig {
+  enabled: boolean;
+  position: CameraPipPosition;
+  size: CameraPipSize;
+  borderRadius: number; // percentage (50 = circle, 0 = square)
+}
+
+export const DEFAULT_CAMERA_PIP_CONFIG: CameraPipConfig = {
+  enabled: true,
+  position: 'bottom-right',
+  size: 'medium',
+  borderRadius: 50,
+};
+
+// Size presets as percentage of container width
+export const CAMERA_PIP_SIZE_PRESETS: Record<CameraPipSize, number> = {
+  small: 15,
+  medium: 22,
+  large: 30,
+};
+
 // depth parameter kept for API compatibility - may be used in future zoom calculations
 export function clampFocusToDepth(focus: ZoomFocus, depth?: ZoomDepth): ZoomFocus {
   void depth;

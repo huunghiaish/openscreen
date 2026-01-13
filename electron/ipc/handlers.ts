@@ -275,6 +275,13 @@ export function registerIpcHandlers(
       const cameraFileName = `camera-${timestamp}.webm`;
       const cameraPath = path.join(RECORDINGS_DIR, cameraFileName);
 
+      // Security: Verify resolved path is within RECORDINGS_DIR (defense in depth)
+      const resolvedPath = path.resolve(cameraPath);
+      const resolvedRecordingsDir = path.resolve(RECORDINGS_DIR);
+      if (!resolvedPath.startsWith(resolvedRecordingsDir + path.sep)) {
+        return { success: false, path: null };
+      }
+
       // Check if camera file exists
       try {
         await fs.access(cameraPath);

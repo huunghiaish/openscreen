@@ -27,6 +27,8 @@ import {
   type AnnotationRegion,
   type CropRegion,
   type FigureData,
+  type CameraPipConfig,
+  DEFAULT_CAMERA_PIP_CONFIG,
 } from "./types";
 import { VideoExporter, GifExporter, type ExportProgress, type ExportQuality, type ExportSettings, type ExportFormat, type GifFrameRate, type GifSizePreset, GIF_SIZE_PRESETS, calculateOutputDimensions } from "@/lib/exporter";
 import { type AspectRatio, getAspectRatioValue } from "@/utils/aspectRatioUtils";
@@ -66,9 +68,12 @@ export default function VideoEditor() {
   const [gifLoop, setGifLoop] = useState(true);
   const [gifSizePreset, setGifSizePreset] = useState<GifSizePreset>('medium');
 
-  // Camera PiP state (will be used in Phase 2 for PiP overlay)
+  // Camera PiP state
   const [cameraVideoPath, setCameraVideoPath] = useState<string | null>(null);
-  void cameraVideoPath; // Suppress unused var warning until Phase 2 uses it
+  const [cameraPipConfig, setCameraPipConfig] = useState<CameraPipConfig>(
+    DEFAULT_CAMERA_PIP_CONFIG
+  );
+  void setCameraPipConfig; // Will be used in Phase 3 for settings panel
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -806,6 +811,8 @@ export default function VideoEditor() {
                       onSelectAnnotation={handleSelectAnnotation}
                       onAnnotationPositionChange={handleAnnotationPositionChange}
                       onAnnotationSizeChange={handleAnnotationSizeChange}
+                      cameraVideoPath={cameraVideoPath}
+                      cameraPipConfig={cameraPipConfig}
                     />
                   </div>
                 </div>
