@@ -1,5 +1,5 @@
 import { Application, Container, Sprite, Graphics, BlurFilter, Texture } from 'pixi.js';
-import type { ZoomRegion, CropRegion, AnnotationRegion } from '@/components/video-editor/types';
+import type { ZoomRegion, CropRegion, AnnotationRegion, ZoomDepth } from '@/components/video-editor/types';
 import { ZOOM_DEPTH_SCALES } from '@/components/video-editor/types';
 import { findDominantRegion } from '@/components/video-editor/videoPlayback/zoomRegionUtils';
 import { applyZoomTransform } from '@/components/video-editor/videoPlayback/zoomTransform';
@@ -32,6 +32,14 @@ interface AnimationState {
   focusY: number;
 }
 
+interface LayoutInfo {
+  stageSize: { width: number; height: number };
+  videoSize: { width: number; height: number };
+  baseScale: number;
+  baseOffset: { x: number; y: number };
+  maskRect: { x: number; y: number; width: number; height: number };
+}
+
 // Renders video frames with all effects (background, zoom, crop, blur, shadow) to an offscreen canvas for export.
 
 export class FrameRenderer {
@@ -48,7 +56,7 @@ export class FrameRenderer {
   private compositeCtx: CanvasRenderingContext2D | null = null;
   private config: FrameRenderConfig;
   private animationState: AnimationState;
-  private layoutCache: any = null;
+  private layoutCache: LayoutInfo | null = null;
   private currentVideoTime = 0;
 
   constructor(config: FrameRenderConfig) {
@@ -69,8 +77,7 @@ export class FrameRenderer {
     // Try to set colorSpace if supported (may not be available on all platforms)
     try {
       if (canvas && 'colorSpace' in canvas) {
-        // @ts-ignore
-        canvas.colorSpace = 'srgb';
+        (canvas as HTMLCanvasElement & { colorSpace?: string }).colorSpace = 'srgb';
       }
     } catch (error) {
       // Silently ignore colorSpace errors on platforms that don't support it
@@ -246,8 +253,8 @@ export class FrameRenderer {
       bgCtx.fillRect(0, 0, this.config.width, this.config.height);
     }
 
-    // Store the background canvas for compositing
-    this.backgroundSprite = bgCanvas as any;
+    // Store the background canvas for compositing (using unknown cast as Sprite type mismatch)
+    this.backgroundSprite = bgCanvas as unknown as Sprite;
   }
 
   async renderFrame(videoFrame: VideoFrame, timestamp: number): Promise<void> {
@@ -258,14 +265,15 @@ export class FrameRenderer {
     this.currentVideoTime = timestamp / 1000000;
 
     // Create or update video sprite from VideoFrame
+    // VideoFrame is compatible with PixiJS Texture.from but not typed
     if (!this.videoSprite) {
-      const texture = Texture.from(videoFrame as any);
+      const texture = Texture.from(videoFrame as unknown as HTMLVideoElement);
       this.videoSprite = new Sprite(texture);
       this.videoContainer.addChild(this.videoSprite);
     } else {
       // Destroy old texture to avoid memory leaks, then create new one
       const oldTexture = this.videoSprite.texture;
-      const newTexture = Texture.from(videoFrame as any);
+      const newTexture = Texture.from(videoFrame as unknown as HTMLVideoElement);
       this.videoSprite.texture = newTexture;
       oldTexture.destroy(true);
     }
@@ -286,8 +294,8 @@ export class FrameRenderer {
     applyZoomTransform({
       cameraContainer: this.cameraContainer,
       blurFilter: this.blurFilter,
-      stageSize: this.layoutCache.stageSize,
-      baseMask: this.layoutCache.maskRect,
+      stageSize: this.layoutCache!.stageSize,
+      baseMask: this.layoutCache!.maskRect,
       zoomScale: this.animationState.scale,
       focusX: this.animationState.focusX,
       focusY: this.animationState.focusY,
@@ -385,7 +393,7 @@ export class FrameRenderer {
 
   private clampFocusToStage(focus: { cx: number; cy: number }, depth: number): { cx: number; cy: number } {
     if (!this.layoutCache) return focus;
-    return clampFocusToStageUtil(focus, depth as any, this.layoutCache);
+    return clampFocusToStageUtil(focus, depth as ZoomDepth, this.layoutCache.stageSize);
   }
 
   private updateAnimationState(timeMs: number): number {
@@ -464,7 +472,7 @@ export class FrameRenderer {
 
     // Step 1: Draw background layer (with optional blur, not affected by zoom)
     if (this.backgroundSprite) {
-      const bgCanvas = this.backgroundSprite as any as HTMLCanvasElement;
+      const bgCanvas = this.backgroundSprite as unknown as HTMLCanvasElement;
       
       if (this.config.showBlur) {
         ctx.save();

@@ -66,6 +66,10 @@ export default function VideoEditor() {
   const [gifLoop, setGifLoop] = useState(true);
   const [gifSizePreset, setGifSizePreset] = useState<GifSizePreset>('medium');
 
+  // Camera PiP state (will be used in Phase 2 for PiP overlay)
+  const [cameraVideoPath, setCameraVideoPath] = useState<string | null>(null);
+  void cameraVideoPath; // Suppress unused var warning until Phase 2 uses it
+
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
   const nextTrimIdRef = useRef(1);
@@ -93,7 +97,7 @@ export default function VideoEditor() {
     async function loadVideo() {
       try {
         const result = await window.electronAPI.getCurrentVideoPath();
-        
+
         if (result.success && result.path) {
           const videoUrl = toFileUrl(result.path);
           setVideoPath(videoUrl);
@@ -108,6 +112,25 @@ export default function VideoEditor() {
     }
     loadVideo();
   }, []);
+
+  // Load camera video path when main video loads
+  useEffect(() => {
+    async function loadCameraVideo() {
+      if (!videoPath) return;
+
+      // Convert file URL back to path
+      const mainPath = videoPath.replace(/^file:\/\/\//, '').replace(/^file:\/\//, '');
+
+      const result = await window.electronAPI.getCameraVideoPath(mainPath);
+      if (result.success && result.path) {
+        setCameraVideoPath(toFileUrl(result.path));
+      } else {
+        setCameraVideoPath(null);
+      }
+    }
+
+    loadCameraVideo();
+  }, [videoPath]);
 
   // Initialize default wallpaper with resolved asset path
   useEffect(() => {
@@ -320,7 +343,7 @@ export default function VideoEditor() {
       });
       return updated;
     });
-  }, []);;
+  }, []);
 
   const handleAnnotationTypeChange = useCallback((id: string, type: AnnotationRegion['type']) => {
     setAnnotationRegions((prev) => {
@@ -472,6 +495,7 @@ export default function VideoEditor() {
     
     // Start export immediately
     handleExport(settings);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoPath, exportFormat, exportQuality, gifFrameRate, gifLoop, gifSizePreset]);
 
   const handleExport = useCallback(async (settings: ExportSettings) => {

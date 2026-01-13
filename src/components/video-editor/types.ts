@@ -119,7 +119,9 @@ export const ZOOM_DEPTH_SCALES: Record<ZoomDepth, number> = {
 
 export const DEFAULT_ZOOM_DEPTH: ZoomDepth = 3;
 
-export function clampFocusToDepth(focus: ZoomFocus, _depth: ZoomDepth): ZoomFocus {
+// depth parameter kept for API compatibility - may be used in future zoom calculations
+export function clampFocusToDepth(focus: ZoomFocus, depth?: ZoomDepth): ZoomFocus {
+  void depth;
   return {
     cx: clamp(focus.cx, 0, 1),
     cy: clamp(focus.cy, 0, 1),

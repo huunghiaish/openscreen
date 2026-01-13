@@ -291,7 +291,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
     try {
       event.currentTarget.releasePointerCapture(event.pointerId);
     } catch {
-      
+      // Ignore pointer capture release errors
     }
   };
 
@@ -564,16 +564,19 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
     video.addEventListener('ended', handlePause);
     video.addEventListener('seeked', handleSeeked);
     video.addEventListener('seeking', handleSeeking);
-    
+
+    // Capture ref for cleanup (React hooks lint rule)
+    const animRef = timeUpdateAnimationRef;
+
     return () => {
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
       video.removeEventListener('ended', handlePause);
       video.removeEventListener('seeked', handleSeeked);
       video.removeEventListener('seeking', handleSeeking);
-      
-      if (timeUpdateAnimationRef.current) {
-        cancelAnimationFrame(timeUpdateAnimationRef.current);
+
+      if (animRef.current) {
+        cancelAnimationFrame(animRef.current);
       }
       
       if (videoSprite) {
@@ -595,6 +598,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       
       videoSpriteRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pixiReady, videoReady, onTimeUpdate, updateOverlayForRegion]);
 
   useEffect(() => {
