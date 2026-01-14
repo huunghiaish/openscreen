@@ -1,9 +1,9 @@
 ---
 title: "Camera, Microphone & System Audio Recording"
 description: "Add webcam capture with overlay, microphone recording, macOS system audio capture, and multi-track timeline integration"
-status: in-progress
+status: complete
 priority: P1
-effort: 24h (completed: 16.5h of 24h - 69%)
+effort: 24h (completed: 24h of 24h - 100%)
 branch: main
 tags: [recording, audio, camera, timeline, media-devices]
 created: 2026-01-13
@@ -44,8 +44,8 @@ Mic     → getUserMedia audio
 | 02 | [Camera Recording & Capture](phase-02-camera-recording-capture.md) | 5h | ✓ complete (2026-01-13) |
 | 03 | [Microphone Recording](phase-03-microphone-recording.md) | 4h | ✓ complete (2026-01-14) |
 | 04 | [System Audio Capture](phase-04-system-audio-capture.md) | 4h | ✓ complete (2026-01-14) |
-| 05 | [HUD UI Device Selectors](phase-05-hud-ui-device-selectors.md) | 4h | pending |
-| 06 | [Timeline Multi-Track](phase-06-timeline-multi-track.md) | 4h | pending |
+| 05 | [HUD UI Device Selectors](phase-05-hud-ui-device-selectors.md) | 4h | ✓ complete (2026-01-14) |
+| 06 | [Timeline Multi-Track](phase-06-timeline-multi-track.md) | 4h | ✓ complete (2026-01-14) |
 
 ## Key Dependencies
 

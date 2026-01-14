@@ -62,6 +62,16 @@ interface Window {
       path?: string | null
       error?: string
     }>
+    getMicAudioPath: (mainVideoPath: string) => Promise<{
+      success: boolean
+      path?: string | null
+      error?: string
+    }>
+    getSystemAudioPath: (mainVideoPath: string) => Promise<{
+      success: boolean
+      path?: string | null
+      error?: string
+    }>
     showCameraOverlay: (deviceId: string) => Promise<void>
     hideCameraOverlay: () => Promise<void>
     hudOverlayHide: () => void

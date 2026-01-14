@@ -29,6 +29,7 @@ import {
   type FigureData,
   type CameraPipConfig,
   DEFAULT_CAMERA_PIP_CONFIG,
+  type MediaTrack,
 } from "./types";
 import { VideoExporter, GifExporter, type ExportProgress, type ExportQuality, type ExportSettings, type ExportFormat, type GifFrameRate, type GifSizePreset, GIF_SIZE_PRESETS, calculateOutputDimensions } from "@/lib/exporter";
 import { type AspectRatio, getAspectRatioValue } from "@/utils/aspectRatioUtils";
@@ -36,6 +37,91 @@ import { getAssetPath } from "@/lib/assetPath";
 
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wallpapers/wallpaper${i + 1}.jpg`);
+
+/**
+ * Pure function to build media tracks from recording paths and duration.
+ * Extracted for testability and single responsibility.
+ */
+interface BuildMediaTracksParams {
+  duration: number;
+  videoPath: string | null;
+  cameraVideoPath: string | null;
+  micAudioPath: string | null;
+  systemAudioPath: string | null;
+}
+
+function buildMediaTracks({
+  duration,
+  videoPath,
+  cameraVideoPath,
+  micAudioPath,
+  systemAudioPath,
+}: BuildMediaTracksParams): MediaTrack[] {
+  if (duration <= 0) {
+    return [];
+  }
+
+  const durationMs = Math.round(duration * 1000);
+  const tracks: MediaTrack[] = [];
+
+  // Screen track always present when video is loaded
+  if (videoPath) {
+    tracks.push({
+      id: 'track-screen',
+      type: 'screen',
+      label: 'Screen',
+      filePath: videoPath,
+      startMs: 0,
+      endMs: durationMs,
+      muted: false,
+      volume: 100,
+    });
+  }
+
+  // Camera track when camera was recorded
+  if (cameraVideoPath) {
+    tracks.push({
+      id: 'track-camera',
+      type: 'camera',
+      label: 'Camera',
+      filePath: cameraVideoPath,
+      startMs: 0,
+      endMs: durationMs,
+      muted: false,
+      volume: 100,
+    });
+  }
+
+  // Mic audio track when mic was recorded
+  if (micAudioPath) {
+    tracks.push({
+      id: 'track-mic',
+      type: 'mic',
+      label: 'Mic',
+      filePath: micAudioPath,
+      startMs: 0,
+      endMs: durationMs,
+      muted: false,
+      volume: 100,
+    });
+  }
+
+  // System audio track when system audio was recorded
+  if (systemAudioPath) {
+    tracks.push({
+      id: 'track-system-audio',
+      type: 'system-audio',
+      label: 'System',
+      filePath: systemAudioPath,
+      startMs: 0,
+      endMs: durationMs,
+      muted: false,
+      volume: 100,
+    });
+  }
+
+  return tracks;
+}
 
 export default function VideoEditor() {
   const [videoPath, setVideoPath] = useState<string | null>(null);
@@ -75,6 +161,13 @@ export default function VideoEditor() {
   );
   // Ref to avoid stale closure in export callback
   const cameraVideoPathRef = useRef<string | null>(null);
+
+  // Audio track paths for timeline display
+  const [micAudioPath, setMicAudioPath] = useState<string | null>(null);
+  const [systemAudioPath, setSystemAudioPath] = useState<string | null>(null);
+
+  // Media tracks for timeline multi-track display
+  const [mediaTracks, setMediaTracks] = useState<MediaTrack[]>([]);
 
   // Camera PiP config change handler
   const handleCameraPipConfigChange = useCallback((updates: Partial<CameraPipConfig>) => {
@@ -124,27 +217,56 @@ export default function VideoEditor() {
     loadVideo();
   }, []);
 
-  // Load camera video path when main video loads
+  // Load camera, mic, and system audio paths when main video loads
   useEffect(() => {
-    async function loadCameraVideo() {
+    async function loadMediaPaths() {
       if (!videoPath) return;
 
       // Convert file URL back to path
       const mainPath = videoPath.replace(/^file:\/\/\//, '').replace(/^file:\/\//, '');
 
-      const result = await window.electronAPI.getCameraVideoPath(mainPath);
-      if (result.success && result.path) {
-        const cameraUrl = toFileUrl(result.path);
+      // Load camera video path
+      const cameraResult = await window.electronAPI.getCameraVideoPath(mainPath);
+      if (cameraResult.success && cameraResult.path) {
+        const cameraUrl = toFileUrl(cameraResult.path);
         setCameraVideoPath(cameraUrl);
-        cameraVideoPathRef.current = cameraUrl; // Update ref for export callback
+        cameraVideoPathRef.current = cameraUrl;
       } else {
         setCameraVideoPath(null);
         cameraVideoPathRef.current = null;
       }
+
+      // Load mic audio path
+      const micResult = await window.electronAPI.getMicAudioPath(mainPath);
+      if (micResult.success && micResult.path) {
+        setMicAudioPath(toFileUrl(micResult.path));
+      } else {
+        setMicAudioPath(null);
+      }
+
+      // Load system audio path
+      const systemResult = await window.electronAPI.getSystemAudioPath(mainPath);
+      if (systemResult.success && systemResult.path) {
+        setSystemAudioPath(toFileUrl(systemResult.path));
+      } else {
+        setSystemAudioPath(null);
+      }
     }
 
-    loadCameraVideo();
+    loadMediaPaths();
   }, [videoPath]);
+
+  // Build media tracks when duration and paths change
+  useEffect(() => {
+    const tracks = buildMediaTracks({
+      duration,
+      videoPath,
+      cameraVideoPath,
+      micAudioPath,
+      systemAudioPath,
+    });
+    setMediaTracks(tracks);
+  }, [duration, videoPath, cameraVideoPath, micAudioPath, systemAudioPath]);
 
   // Initialize default wallpaper with resolved asset path
   useEffect(() => {
@@ -876,6 +998,7 @@ export default function VideoEditor() {
               onSelectAnnotation={handleSelectAnnotation}
               aspectRatio={aspectRatio}
               onAspectRatioChange={setAspectRatio}
+              mediaTracks={mediaTracks}
             />
               </div>
             </Panel>

@@ -9,7 +9,8 @@ import Row from "./Row";
 import Item from "./Item";
 import KeyframeMarkers from "./KeyframeMarkers";
 import type { Range, Span } from "dnd-timeline";
-import type { ZoomRegion, TrimRegion, AnnotationRegion } from "../types";
+import type { ZoomRegion, TrimRegion, AnnotationRegion, MediaTrack } from "../types";
+import { MediaTrackRow } from "./media-track-row";
 import { v4 as uuidv4 } from 'uuid';
 import {
   DropdownMenu,
@@ -51,6 +52,8 @@ interface TimelineEditorProps {
   onSelectAnnotation?: (id: string | null) => void;
   aspectRatio: AspectRatio;
   onAspectRatioChange: (aspectRatio: AspectRatio) => void;
+  // Media tracks for multi-track timeline display
+  mediaTracks?: MediaTrack[];
 }
 
 interface TimelineScaleConfig {
@@ -372,6 +375,7 @@ function Timeline({
   selectedZoomId,
   selectedTrimId,
   selectedAnnotationId,
+  mediaTracks,
 }: {
   items: TimelineRenderItem[];
   videoDurationMs: number;
@@ -384,6 +388,7 @@ function Timeline({
   selectedZoomId: string | null;
   selectedTrimId?: string | null;
   selectedAnnotationId?: string | null;
+  mediaTracks?: MediaTrack[];
 }) {
   const { setTimelineRef, style, sidebarWidth, range, pixelsToValue } = useTimelineContext();
   const localTimelineRef = useRef<HTMLDivElement | null>(null);
@@ -427,13 +432,24 @@ function Timeline({
     >
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff03_1px,transparent_1px)] bg-[length:20px_100%] pointer-events-none" />
       <TimelineAxis intervalMs={intervalMs} videoDurationMs={videoDurationMs} currentTimeMs={currentTimeMs} />
-      <PlaybackCursor 
-        currentTimeMs={currentTimeMs} 
-        videoDurationMs={videoDurationMs} 
+      <PlaybackCursor
+        currentTimeMs={currentTimeMs}
+        videoDurationMs={videoDurationMs}
         onSeek={onSeek}
         timelineRef={localTimelineRef}
       />
-      
+
+      {/* Media tracks section (screen, camera, mic, system audio) */}
+      {mediaTracks && mediaTracks.length > 0 && (
+        <>
+          {mediaTracks.map((track) => (
+            <MediaTrackRow key={track.id} track={track} />
+          ))}
+          {/* Divider between media tracks and editing tracks */}
+          <div className="h-1 bg-[#0f0f0f]" />
+        </>
+      )}
+
       <Row id={ZOOM_ROW_ID}>
         {zoomItems.map((item) => (
           <Item
@@ -510,6 +526,7 @@ export default function TimelineEditor({
   onSelectAnnotation,
   aspectRatio,
   onAspectRatioChange,
+  mediaTracks = [],
 }: TimelineEditorProps) {
   const totalMs = useMemo(() => Math.max(0, Math.round(videoDuration * 1000)), [videoDuration]);
   const currentTimeMs = useMemo(() => Math.round(currentTime * 1000), [currentTime]);
@@ -953,6 +970,7 @@ export default function TimelineEditor({
             selectedZoomId={selectedZoomId}
             selectedTrimId={selectedTrimId}
             selectedAnnotationId={selectedAnnotationId}
+            mediaTracks={mediaTracks}
           />
         </TimelineWrapper>
       </div>

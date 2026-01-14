@@ -178,10 +178,38 @@ const {
 
 **Features**:
 - Play, pause, scrub through recorded video
+- **Multi-track timeline display** (Phase 06):
+  - Screen video track (always present, blue #3b82f6)
+  - Camera video track (if recorded, purple #8b5cf6)
+  - Microphone audio track (if recorded, green #22c55e)
+  - System audio track (if recorded on macOS 13.2+, amber #f59e0b)
+  - Audio waveform visualization (MVP gradient pattern)
+  - Track labels with icons (▶ 🎥 🎤 🔊)
 - Timeline editing with zoom regions and annotations
-- Multi-track audio support (camera audio, system audio, microphone)
 - Real-time preview of edits
 - Settings panel for video/GIF export configuration
+
+### Timeline Module (Phase 06)
+
+**Location**: `src/components/video-editor/timeline/`
+
+**Key Files**:
+- `TimelineEditor.tsx` - Main timeline container with dnd-timeline integration
+- `media-track-row.tsx` - Individual media track row rendering
+- `types.ts` - MediaTrack type definitions and constants
+
+**Type System**:
+- `MediaTrack` interface: id, type, label, filePath, startMs, endMs, muted, volume
+- `MediaTrackType`: 'screen' | 'camera' | 'mic' | 'system-audio'
+- Constants: `MEDIA_TRACK_COLORS`, `MEDIA_TRACK_ICONS`, `MEDIA_TRACK_ROW_IDS`
+
+**Features**:
+- Multi-track display with color-coded blocks by track type
+- Track labels with emoji icons in left sidebar (80px fixed width)
+- Audio waveform visualization via repeating gradient pattern (MVP)
+- Muted state reduces track opacity to 0.3
+- Each track row: 40px height (28px item + margins)
+- Video tracks: solid color, Audio tracks: gradient pattern
 
 ### Export Pipeline
 
@@ -254,8 +282,11 @@ Built on Radix UI + Tailwind CSS. Includes:
 - `SELECT_OUTPUT_PATH` - File save dialog
 - `GET_PLATFORM` - Query macOS version for feature detection
 - `get-camera-video-path` - Resolve camera video file from recording timestamp
+- `get-mic-audio-path` (Phase 06) - Resolve microphone audio file from recording timestamp
+- `get-system-audio-path` (Phase 06) - Resolve system audio file from recording timestamp
 - `store-camera-recording` - Save camera WebM file with path validation
 - `store-audio-recording` - Save microphone audio WebM file with security checks
+- `store-system-audio-recording` - Save system audio WebM file with security checks
 
 ## Key Dependencies
 
@@ -291,6 +322,40 @@ npm run test:watch       # Watch mode tests
 `@/` maps to `src/` (configured in `vite.config.ts`)
 
 ## Recent Changes (as of 2026-01-14)
+
+**Phase 05: HUD UI Device Selectors** (COMPLETE)
+- New `device-dropdown.tsx` reusable dropdown component (246 lines)
+  - Base component for camera/microphone selection with ARIA accessibility
+  - Keyboard navigation: Arrow keys, Enter/Space, Escape to close
+  - Glass morphism styling, opens upward to avoid obscuring controls
+  - Optional header content slot for additional UI (audio meters, status)
+- New `camera-settings-dropdown.tsx` camera device selector (106 lines)
+  - Specialized dropdown with None option for disabling camera
+  - Permission request on first selection
+  - Integrates with useMediaDevices for device enumeration
+- New `mic-settings-dropdown.tsx` microphone device selector (52 lines)
+  - Audio level meter header showing real-time input (0-100 scale, dB units)
+  - Displays visual VU meter during microphone selection
+- New `system-audio-toggle.tsx` system audio toggle component (54 lines)
+  - Platform detection with disabled state for non-macOS systems
+  - Tooltip explaining macOS 13.2+ requirement
+- New `use-camera-overlay.ts` hook (101 lines)
+  - Manages camera overlay window visibility based on recording/preview state
+  - Shows overlay: recording with camera+preview OR preview enabled (idle)
+  - Hides overlay: recording stops, preview disabled, or camera deselected
+  - Safe Electron API access with runtime validation
+- New `use-recording-timer.ts` hook (52 lines)
+  - Tracks recording elapsed time (seconds) and formatted display (MM:SS)
+  - Auto-resets on recording stop
+- New `use-selected-source.ts` hook (61 lines)
+  - Polls Electron API for selected capture source (screen/window)
+  - Returns sourceName and hasSelectedSource boolean
+  - 500ms polling interval for state sync
+- Updated `LaunchWindow.tsx` component integration
+  - Integrated all new dropdowns and toggles
+  - Uses new hooks for overlay, timer, and source management
+  - Camera position/size state (defaults: bottom-right, medium)
+  - Microphone capture lifecycle management (start/stop on selection)
 
 **Phase 04: System Audio Capture** (COMPLETE)
 - New `audio-capture-utils.ts` shared utility module (169 lines)
@@ -394,9 +459,8 @@ npm run test:watch       # Watch mode tests
 
 ## Next Steps
 
-See Phase 02-06 in `/plans/260113-1255-camera-mic-system-audio-recording/` for upcoming features:
-- Camera recording capture
-- Microphone recording
-- System audio capture
-- HUD device selectors
-- Timeline multi-track support
+All HUD and recording phases complete. Upcoming work:
+- Timeline multi-track support (audio synchronization)
+- Advanced audio effects (normalization, EQ, compression)
+- Export optimization (performance improvements)
+- Plugin system for third-party filters

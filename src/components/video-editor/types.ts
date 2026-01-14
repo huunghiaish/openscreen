@@ -1,3 +1,38 @@
+// Media track types for timeline multi-track display
+export type MediaTrackType = 'screen' | 'camera' | 'mic' | 'system-audio';
+
+export interface MediaTrack {
+  id: string;
+  type: MediaTrackType;
+  label: string;
+  filePath: string;
+  startMs: number;
+  endMs: number;
+  muted: boolean;
+  volume: number; // 0-100
+}
+
+export const MEDIA_TRACK_ROW_IDS: Record<MediaTrackType, string> = {
+  'screen': 'row-screen-video',
+  'camera': 'row-camera-video',
+  'mic': 'row-mic-audio',
+  'system-audio': 'row-system-audio',
+};
+
+export const MEDIA_TRACK_COLORS: Record<MediaTrackType, string> = {
+  'screen': '#3b82f6', // blue
+  'camera': '#8b5cf6', // purple
+  'mic': '#22c55e',    // green
+  'system-audio': '#f59e0b', // amber
+};
+
+export const MEDIA_TRACK_ICONS: Record<MediaTrackType, string> = {
+  'screen': '▶',
+  'camera': '🎥',
+  'mic': '🎤',
+  'system-audio': '🔊',
+};
+
 export type ZoomDepth = 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface ZoomFocus {

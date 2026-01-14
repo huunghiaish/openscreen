@@ -158,12 +158,20 @@ return <VideoEditor />; // default
    │        │  └─ Emit 'store-system-audio-recording' IPC with system audio blob
    │        └─ All files saved to RECORDINGS_DIR
    │
-   └─ Editor Window Opens
+   └─ Editor Window Opens (Phase 06: Multi-Track Timeline)
       ├─ Video data loaded from file
-      ├─ Audio tracks loaded (camera audio, system audio, microphone)
-      ├─ Camera video track loaded (if camera was recorded)
-      │  └─ Accessible in timeline for editing
-      └─ Timeline shows all tracks (screen + camera + audio)
+      ├─ buildMediaTracks() resolves all available audio/video paths
+      │  ├─ Call getMicAudioPath(mainVideoPath)
+      │  ├─ Call getSystemAudioPath(mainVideoPath)
+      │  ├─ Reuse cameraVideoPath from Phase 03
+      │  └─ Construct MediaTrack[] for each available file
+      ├─ TimelineEditor renders multi-track display
+      │  ├─ MediaTrackRow (Screen) - always present
+      │  ├─ MediaTrackRow (Camera) - if camera-{timestamp}.webm exists
+      │  ├─ MediaTrackRow (Microphone) - if mic-{timestamp}.webm exists
+      │  ├─ MediaTrackRow (System Audio) - if system-audio-{timestamp}.webm exists
+      │  └─ Color-coded blocks + waveform patterns for audio tracks
+      └─ Each track spans correct duration (startMs → endMs)
 
 2. Video Editing
    ├─ User interacts with timeline
@@ -175,8 +183,8 @@ return <VideoEditor />; // default
    ├─ PixiJS canvas updates in real-time
    │  ├─ Renders current frame
    │  ├─ Applies zoom/effects
-   │  ├─ Shows audio waveforms
-   │  └─ Overlays camera preview (if present)
+   │  ├─ Overlays camera preview (if present)
+   │  └─ Playback synchronized with all timeline tracks
    │
    └─ User Exports
       ├─ Select export format (MP4, GIF)
@@ -195,15 +203,40 @@ return <VideoEditor />; // default
 ### Launch Window (HUD Overlay)
 
 ```
-LaunchWindow
-├── RecordButton
-│   └── StateIndicator
-├── DeviceSelector
-│   ├── CameraDropdown
-│   └── MicrophoneDropdown
-└── StatusPanel
-    └── PermissionPrompt
+LaunchWindow (Main HUD component)
+├── useMediaDevices Hook (device enumeration)
+├── useMicrophoneCapture Hook (audio level metering)
+├── useSelectedSource Hook (source name display)
+├── useRecordingTimer Hook (elapsed time display)
+├── useCameraOverlay Hook (camera window management)
+│
+├── RecordButton + Status Display
+│   ├── Recording timer (MM:SS format)
+│   └── Selected source name
+│
+├── CameraSettingsDropdown
+│   ├── DeviceDropdown (base component)
+│   ├── None / Camera list options
+│   └── Permission request handling
+│
+├── MicSettingsDropdown
+│   ├── DeviceDropdown (base component)
+│   ├── AudioLevelMeter (header content - real-time VU meter)
+│   ├── None / Microphone list options
+│   └── Audio level display (0-100, dB scale)
+│
+└── SystemAudioToggle
+    ├── Toggle button (enabled/disabled)
+    └── Platform check (macOS 13.2+ required)
 ```
+
+**DeviceDropdown (Base Component)**:
+- Reusable dropdown for device selection
+- Keyboard navigation: Arrow Up/Down, Enter/Space, Escape
+- ARIA accessibility: aria-label, aria-expanded, aria-selected
+- Glass morphism styling (HUD aesthetic)
+- Opens upward to avoid obscuring controls
+- Optional headerContent slot (e.g., audio meters)
 
 ### Video Editor
 
@@ -215,12 +248,19 @@ VideoEditor
 │   │   └── Synchronized with main video (play/pause/seek)
 │   └── ZoomEffectApplier
 ├── TimelineEditor
-│   ├── VideoTrack (Screen)
-│   ├── VideoTrack (Camera) [optional]
-│   ├── AudioTrack (Camera)
-│   ├── AudioTrack (System)
-│   ├── AudioTrack (Microphone)
-│   └── ZoomRegionEditor
+│   ├── MediaTrackRow (Screen video)
+│   │   ├── Label: ▶ Screen
+│   │   └── Block: Blue (#3b82f6), solid color
+│   ├── MediaTrackRow (Camera video) [optional]
+│   │   ├── Label: 🎥 Camera
+│   │   └── Block: Purple (#8b5cf6), solid color
+│   ├── MediaTrackRow (Microphone audio) [optional]
+│   │   ├── Label: 🎤 Microphone
+│   │   └── Block: Green (#22c55e), gradient waveform pattern
+│   ├── MediaTrackRow (System audio) [optional]
+│   │   ├── Label: 🔊 System Audio
+│   │   └── Block: Amber (#f59e0b), gradient waveform pattern
+│   └── ZoomRegionEditor (existing zoom regions)
 └── SettingsPanel (Tabs: General, Export, Annotations)
     ├── CameraPipSettings (if camera recorded)
     │   ├── EnableToggle
@@ -242,6 +282,21 @@ VideoEditor
         ├── GifSettings
         └── FilenameInput
 ```
+
+## Multi-Track Timeline Architecture (Phase 06)
+
+See dedicated documentation: [Timeline & Multi-Track Architecture](./timeline-architecture.md)
+
+Covers:
+- Track display system with responsive layout
+- MediaTrack type system and interfaces
+- Visual design (color scheme, icons, waveform visualization)
+- File path resolution pattern
+- Track loading process
+- Component integration
+- Audio waveform MVP implementation
+- Security considerations
+- Performance notes
 
 ## Export Compositing Architecture
 
@@ -568,22 +623,31 @@ Client → Main: { type: 'store-camera-recording', payload: { videoData: ArrayBu
 Main → Client: { type: 'store-camera-recording-result', payload: { success: boolean, path: string } }
 ```
 
-### Camera Video Path Resolution
+### Audio/Video Path Resolution
 
 ```
+Camera Video Path:
 Client → Main: { type: 'get-camera-video-path', payload: mainVideoPath }
 Main → Client: { type: 'get-camera-video-path-result', payload: { success: boolean, path: string | null } }
+
+Microphone Audio Path (Phase 06):
+Client → Main: { type: 'get-mic-audio-path', payload: mainVideoPath }
+Main → Client: { type: 'get-mic-audio-path-result', payload: { success: boolean, path: string | null } }
+
+System Audio Path (Phase 06):
+Client → Main: { type: 'get-system-audio-path', payload: mainVideoPath }
+Main → Client: { type: 'get-system-audio-path-result', payload: { success: boolean, path: string | null } }
 ```
 
 **Details**:
-- Resolves camera video path from main recording path
-- Pattern matching: `recording-{timestamp}.webm` → `camera-{timestamp}.webm`
-- Returns null if camera file doesn't exist (no camera recorded)
-- Used in VideoEditor to load camera PiP overlay
+- Pattern matching: `recording-{timestamp}.webm` → `camera|mic|system-audio-{timestamp}.webm`
+- Returns null if file doesn't exist (track was not recorded)
+- Used in VideoEditor.buildMediaTracks() to construct timeline tracks
 - **Security**: Path validation prevents directory traversal attacks
   - Resolved path must be within RECORDINGS_DIR
   - Check: `path.startsWith(RECORDINGS_DIR + path.sep)`
   - File existence verified before returning path
+  - Filename pattern validation ensures only valid audio files processed
 
 ### Export Pipeline
 

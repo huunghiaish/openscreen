@@ -400,4 +400,68 @@ export function registerIpcHandlers(
       return { success: false, error: String(error) };
     }
   });
+
+  // Get microphone audio path from main recording path
+  ipcMain.handle('get-mic-audio-path', async (_, mainVideoPath: string) => {
+    try {
+      const filename = path.basename(mainVideoPath);
+      const match = filename.match(/recording-(\d+)\.webm$/);
+
+      if (!match) {
+        return { success: false, path: null };
+      }
+
+      const timestamp = match[1];
+      const micFileName = `mic-${timestamp}.webm`;
+      const micPath = path.join(RECORDINGS_DIR, micFileName);
+
+      // Security: Verify resolved path is within RECORDINGS_DIR
+      const resolvedPath = path.resolve(micPath);
+      const resolvedRecordingsDir = path.resolve(RECORDINGS_DIR);
+      if (!resolvedPath.startsWith(resolvedRecordingsDir + path.sep)) {
+        return { success: false, path: null };
+      }
+
+      try {
+        await fs.access(micPath);
+        return { success: true, path: micPath };
+      } catch {
+        return { success: false, path: null };
+      }
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
+
+  // Get system audio path from main recording path
+  ipcMain.handle('get-system-audio-path', async (_, mainVideoPath: string) => {
+    try {
+      const filename = path.basename(mainVideoPath);
+      const match = filename.match(/recording-(\d+)\.webm$/);
+
+      if (!match) {
+        return { success: false, path: null };
+      }
+
+      const timestamp = match[1];
+      const systemAudioFileName = `system-audio-${timestamp}.webm`;
+      const systemAudioPath = path.join(RECORDINGS_DIR, systemAudioFileName);
+
+      // Security: Verify resolved path is within RECORDINGS_DIR
+      const resolvedPath = path.resolve(systemAudioPath);
+      const resolvedRecordingsDir = path.resolve(RECORDINGS_DIR);
+      if (!resolvedPath.startsWith(resolvedRecordingsDir + path.sep)) {
+        return { success: false, path: null };
+      }
+
+      try {
+        await fs.access(systemAudioPath);
+        return { success: true, path: systemAudioPath };
+      } catch {
+        return { success: false, path: null };
+      }
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
 }

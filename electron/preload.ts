@@ -77,6 +77,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCameraVideoPath: (mainVideoPath: string) => {
     return ipcRenderer.invoke('get-camera-video-path', mainVideoPath)
   },
+  getMicAudioPath: (mainVideoPath: string) => {
+    return ipcRenderer.invoke('get-mic-audio-path', mainVideoPath)
+  },
+  getSystemAudioPath: (mainVideoPath: string) => {
+    return ipcRenderer.invoke('get-system-audio-path', mainVideoPath)
+  },
   storeAudioRecording: (audioData: ArrayBuffer, fileName: string) => {
     return ipcRenderer.invoke('store-audio-recording', audioData, fileName)
   },

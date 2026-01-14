@@ -4,6 +4,234 @@ All notable changes to OpenScreen are documented in this file. The project follo
 
 ## [Unreleased]
 
+### Phase 06: Timeline Multi-Track Display (Completed)
+
+#### Added
+- **MediaTrack Type System** (`src/components/video-editor/types.ts`, 35 lines)
+  - `MediaTrackType`: Four media types (screen, camera, mic, system-audio)
+  - `MediaTrack` interface: id, type, label, filePath, startMs, endMs, muted, volume
+  - `MEDIA_TRACK_ROW_IDS`: Row identifiers for dnd-timeline (e.g., 'row-screen-video')
+  - `MEDIA_TRACK_COLORS`: Color mapping by track type (blue/purple/green/amber)
+  - `MEDIA_TRACK_ICONS`: Emoji icons for each track type (▶ 🎥 🎤 🔊)
+
+- **MediaTrackRow Component** (`src/components/video-editor/timeline/media-track-row.tsx`, 116 lines)
+  - Renders single media track with label sidebar + visualization block
+  - Label sidebar: Icon + track label (fixed 80px width, left-positioned)
+  - Track item block: Spans duration (startMs to endMs) in timeline
+  - Audio vs video styling: Audio tracks use gradient pattern, video solid color
+  - Audio waveform visualization: MVP repeating gradient placeholder (real waveform TBD)
+  - Supports muted state: Reduces opacity to 0.3 when muted
+  - Non-draggable: `disabled: true` in dnd-timeline item config
+
+- **Track Building Logic** (`src/components/video-editor/VideoEditor.tsx`, buildMediaTracks function)
+  - Constructs MediaTrack[] from available recording files
+  - Determines track availability: Checks for camera, mic, system-audio file existence
+  - Time sync: All tracks aligned to same timeline (main video duration)
+  - Volume/mute state initialized: volume=100, muted=false defaults
+  - Supports partial recordings (camera may not exist if not recorded)
+
+#### Updated
+- **TimelineEditor Component** (`src/components/video-editor/timeline/TimelineEditor.tsx`)
+  - Added `mediaTracks?: MediaTrack[]` prop
+  - Conditional rendering: Renders MediaTrackRow items if mediaTracks present
+  - Maintains compatibility with existing zoom region and annotation rows
+  - Map function: `mediaTracks.map((track) => <MediaTrackRow key={track.id} track={track} />)`
+
+- **VideoEditor Component** (`src/components/video-editor/VideoEditor.tsx`)
+  - Added `mediaTracks` state: `useState<MediaTrack[]>([])`
+  - useEffect hook: Loads media tracks after video metadata available
+  - Passes mediaTracks to TimelineEditor component
+  - buildMediaTracks parameters: videoPath, cameraVideoPath, micAudioPath, systemAudioPath
+
+- **IPC Handlers** (`electron/ipc/handlers.ts`)
+  - New `getMicAudioPath` handler: Returns path to mic audio file
+  - New `getSystemAudioPath` handler: Returns path to system audio file
+  - Pattern matching: `recording-{timestamp}.webm` → `mic-{timestamp}.webm`, `system-audio-{timestamp}.webm`
+
+- **Preload API** (`electron/preload.ts`)
+  - New `getMicAudioPath(mainVideoPath)` function
+  - New `getSystemAudioPath(mainVideoPath)` function
+  - Type-safe IPC bridge methods
+
+#### Technical Details
+
+**Track Display Architecture**:
+- Timeline grid layout: Each track occupies full width (responsive)
+- Label sidebar: 80px fixed width, overlays timeline grid
+- Track height: 40px total (28px item + 2px margin + 10px padding)
+- Border: Bottom border (#18181b) separates tracks
+- Z-index: Sidebar at z-20 (above dnd-timeline content)
+
+**Color & Icon Scheme**:
+- Screen (video): Blue (#3b82f6), play icon (▶)
+- Camera (video): Purple (#8b5cf6), camera icon (🎥)
+- Microphone (audio): Green (#22c55e), mic icon (🎤)
+- System Audio (audio): Amber (#f59e0b), speaker icon (🔊)
+
+**Audio Waveform Visualization**:
+- MVP implementation: Repeating 90deg linear gradient pattern
+- Pattern repeats every 8px: alternates color opacity (20% → 50% → 70% → 50% → 20%)
+- Real waveform rendering deferred to future phase
+- Muted audio: Entire track reduces to 0.3 opacity
+
+**Track Building Process**:
+1. Check file existence for camera, mic, system-audio
+2. Create MediaTrack object for each available file
+3. Set timing: startMs=0, endMs=videoDuration
+4. Initialize defaults: volume=100, muted=false
+5. Pass array to TimelineEditor
+
+**File Path Resolution**:
+- Camera: Already available from Phase 03 (getCameraVideoPath)
+- Microphone: New IPC handler getMicAudioPath (same pattern matching)
+- System Audio: New IPC handler getSystemAudioPath (same pattern matching)
+- All paths validated for security (path traversal prevention)
+
+#### Code Metrics
+- MediaTrack types: 35 LOC
+- MediaTrackRow component: 116 LOC
+- TimelineEditor updates: 15 LOC
+- VideoEditor buildMediaTracks: ~50 LOC
+- IPC handlers: ~40 LOC
+- **Total Phase 06 code: ~256 LOC**
+
+#### Verified Components
+- MediaTrack interface properly typed with all properties
+- MediaTrackRow renders with correct styling for all track types
+- Audio tracks display with gradient waveform pattern
+- Video tracks display solid color blocks
+- Label sidebar positioned correctly with icon + label
+- Muted state reduces opacity appropriately
+- TimelineEditor renders media tracks above zoom regions
+- VideoEditor loads all available tracks after video loads
+- IPC handlers return correct paths with security validation
+
+### Phase 05: HUD UI Device Selectors (Completed)
+
+#### Added
+- **DeviceDropdown Base Component** (`src/components/launch/device-dropdown.tsx`, 246 lines)
+  - Reusable dropdown for camera/microphone selection with ARIA accessibility
+  - Keyboard navigation: Arrow Up/Down for focus, Enter/Space to select, Escape to close
+  - Glass morphism styling matching HUD overlay aesthetic
+  - Opens upward to avoid obscuring main controls
+  - Optional header content support (level meters, status indicators)
+  - Screen reader support with aria-label, aria-expanded, aria-selected
+
+- **CameraSettingsDropdown Component** (`src/components/launch/camera-settings-dropdown.tsx`, 106 lines)
+  - Specialized dropdown for camera device selection
+  - Displays "None" option for disabling camera capture
+  - Integrates with useMediaDevices hook for device enumeration
+  - Permission request handling on first camera selection
+  - Icon: Camera symbol (FaCamera)
+
+- **MicSettingsDropdown Component** (`src/components/launch/mic-settings-dropdown.tsx`, 52 lines)
+  - Specialized dropdown for microphone device selection
+  - Audio level meter header showing real-time mic input (0-100 scale)
+  - Visual VU meter (AnimatedAudioLevelMeter component)
+  - Displays current audio level in dB scale during selection
+  - Icon: Microphone symbol (FaMicrophone)
+
+- **SystemAudioToggle Component** (`src/components/launch/system-audio-toggle.tsx`, 54 lines)
+  - Toggle button for system audio capture (macOS 13.2+ only)
+  - Platform detection with disabled state for unsupported systems
+  - Tooltip explaining system audio requirement (macOS Ventura+)
+  - Visual indicator: speaker icon with enable/disable state
+  - Seamless integration with useMediaDevices for state management
+
+- **useCameraOverlay Hook** (`src/hooks/use-camera-overlay.ts`, 101 lines)
+  - Manages camera overlay window visibility based on recording state
+  - Shows overlay: recording starts with camera+preview OR preview enabled (not recording)
+  - Hides overlay: recording stops, preview disabled, or camera deselected
+  - Safe Electron API access with runtime validation
+  - Handles state transitions with previous state tracking via useRef
+
+- **useRecordingTimer Hook** (`src/hooks/use-recording-timer.ts`, 52 lines)
+  - Tracks recording elapsed time when recording active
+  - Provides formatted time string (MM:SS format)
+  - Automatically resets on recording stop
+  - Returns both elapsed (seconds) and formattedTime for UI display
+
+- **useSelectedSource Hook** (`src/hooks/use-selected-source.ts`, 61 lines)
+  - Polls Electron API for currently selected capture source (screen/window)
+  - Polling interval: 500ms to sync source selection changes
+  - Returns sourceName (display name) and hasSelectedSource (boolean)
+  - Provides openSourceSelector() callback to trigger source picker window
+  - Error handling with graceful fallback to "Screen" default
+
+#### Updated
+- **LaunchWindow Component** (`src/components/launch/LaunchWindow.tsx`):
+  - Integrated CameraSettingsDropdown for camera device selection
+  - Integrated MicSettingsDropdown with audio level metering
+  - Integrated SystemAudioToggle for system audio preference
+  - Uses new useCameraOverlay hook for overlay window management
+  - Uses new useRecordingTimer hook for elapsed time display
+  - Uses new useSelectedSource hook for source name display
+  - Camera position/size state management (defaults: bottom-right, medium)
+  - Camera preview toggle state (enabled by default)
+  - Microphone capture lifecycle: starts when mic selected, stops when deselected
+
+#### Technical Details
+
+**Device Selection UX**:
+- Camera dropdown with None option and device enumeration
+- Microphone dropdown with integrated audio level meter feedback
+- System audio toggle (conditional on macOS 13.2+)
+- Permission request on first device selection
+- All selections persisted to localStorage via useMediaDevices hook
+
+**Recording Timer**:
+- Updates every 1 second when recording active
+- Displays MM:SS format (e.g., 01:23 for 1 minute 23 seconds)
+- Automatically resets and hides when recording stops
+
+**Camera Overlay Management**:
+- Shows overlay window during recording if camera+preview enabled
+- Shows preview window when not recording if preview enabled
+- Hides overlay on recording stop or preview disable
+- Handles device changes gracefully with state tracking
+
+**Source Selection Polling**:
+- Continuous polling (500ms interval) to detect source changes
+- Triggered by SourceSelector window updates
+- Used for displaying selected source name in HUD
+
+**Component Hierarchy**:
+```
+LaunchWindow
+├── CameraSettingsDropdown
+├── MicSettingsDropdown (with internal AudioLevelMeter)
+├── SystemAudioToggle
+└── RecordButton + Status Display
+    └── Recording timer display
+```
+
+**Accessibility**:
+- All dropdowns keyboard navigable (arrow keys, enter/space, escape)
+- ARIA labels for screen readers
+- aria-expanded, aria-selected state indicators
+- Proper focus management and tab order
+
+#### Code Metrics
+- DeviceDropdown: 246 LOC (base component)
+- CameraSettingsDropdown: 106 LOC
+- MicSettingsDropdown: 52 LOC
+- SystemAudioToggle: 54 LOC
+- useCameraOverlay: 101 LOC
+- useRecordingTimer: 52 LOC
+- useSelectedSource: 61 LOC
+- **Total Phase 05 code: 672 LOC**
+
+#### Verified Components
+- DeviceDropdown renders with proper keyboard navigation and ARIA
+- Camera dropdown handles permission requests correctly
+- Microphone dropdown displays real-time audio levels
+- System audio toggle shows platform-appropriate UI
+- All hooks properly manage state and cleanup on unmount
+- LaunchWindow integrates all components without duplicate state
+- Recording timer updates accurately during active recording
+- Camera overlay visibility synced with recording state
+- Source selection reflected in HUD (polling-based)
+
 ### Phase 04: System Audio Capture (Completed)
 
 #### Added
