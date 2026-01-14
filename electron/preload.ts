@@ -77,6 +77,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCameraVideoPath: (mainVideoPath: string) => {
     return ipcRenderer.invoke('get-camera-video-path', mainVideoPath)
   },
+  storeAudioRecording: (audioData: ArrayBuffer, fileName: string) => {
+    return ipcRenderer.invoke('store-audio-recording', audioData, fileName)
+  },
   showCameraOverlay: (deviceId: string) => {
     return ipcRenderer.invoke('show-camera-overlay', deviceId)
   },

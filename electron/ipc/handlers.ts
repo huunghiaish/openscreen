@@ -14,6 +14,71 @@ interface DesktopSource {
 
 let selectedSource: DesktopSource | null = null
 
+// Max file sizes: 5GB video, 500MB camera, 100MB audio
+const MAX_VIDEO_SIZE = 5 * 1024 * 1024 * 1024;
+const MAX_CAMERA_SIZE = 500 * 1024 * 1024;
+const MAX_AUDIO_SIZE = 100 * 1024 * 1024;
+
+/**
+ * Validate and sanitize recording filename to prevent path traversal.
+ * Enforces strict format: (recording|camera|mic)-{timestamp}.{extension}
+ */
+function validateRecordingFileName(fileName: string, allowedExtensions: string[]): string | null {
+  // Extract basename to prevent directory traversal
+  const baseName = path.basename(fileName);
+
+  // Strict pattern: prefix-timestamp.extension (timestamp is 13-digit Unix ms)
+  // Allowed prefixes: recording, camera, mic
+  const validPattern = /^(recording|camera|mic)-\d{13,14}\.[a-z0-9]+$/;
+  if (!validPattern.test(baseName)) {
+    return null;
+  }
+
+  // Verify extension is in allowed list
+  const ext = path.extname(baseName).toLowerCase().slice(1);
+  if (!allowedExtensions.includes(ext)) {
+    return null;
+  }
+
+  return baseName;
+}
+
+/**
+ * Safe file write with path traversal protection.
+ * Validates resolved path stays within targetDir.
+ */
+async function safeWriteRecording(
+  targetDir: string,
+  fileName: string,
+  data: ArrayBuffer,
+  maxSize: number,
+  allowedExtensions: string[]
+): Promise<{ success: boolean; path?: string; error?: string }> {
+  // Validate file size
+  if (data.byteLength > maxSize) {
+    return { success: false, error: `File too large (max ${Math.round(maxSize / 1024 / 1024)}MB)` };
+  }
+
+  // Validate filename
+  const safeName = validateRecordingFileName(fileName, allowedExtensions);
+  if (!safeName) {
+    return { success: false, error: 'Invalid filename format' };
+  }
+
+  // Build and validate path
+  const targetPath = path.join(targetDir, safeName);
+  const resolvedPath = path.resolve(targetPath);
+  const resolvedDir = path.resolve(targetDir);
+
+  // Defense in depth: verify path is within target directory
+  if (!resolvedPath.startsWith(resolvedDir + path.sep)) {
+    return { success: false, error: 'Invalid file path' };
+  }
+
+  await fs.writeFile(resolvedPath, Buffer.from(data));
+  return { success: true, path: resolvedPath };
+}
+
 export function registerIpcHandlers(
   createEditorWindow: () => void,
   createSourceSelectorWindow: () => BrowserWindow,
@@ -68,21 +133,25 @@ export function registerIpcHandlers(
 
   ipcMain.handle('store-recorded-video', async (_, videoData: ArrayBuffer, fileName: string) => {
     try {
-      const videoPath = path.join(RECORDINGS_DIR, fileName)
-      await fs.writeFile(videoPath, Buffer.from(videoData))
-      currentVideoPath = videoPath;
-      return {
-        success: true,
-        path: videoPath,
-        message: 'Video stored successfully'
+      const result = await safeWriteRecording(
+        RECORDINGS_DIR,
+        fileName,
+        videoData,
+        MAX_VIDEO_SIZE,
+        ['webm', 'mp4', 'mov']
+      );
+      if (result.success && result.path) {
+        currentVideoPath = result.path;
+        return { ...result, message: 'Video stored successfully' };
       }
+      return { ...result, message: result.error || 'Failed to store video' };
     } catch (error) {
-      console.error('Failed to store video:', error)
+      console.error('Failed to store video:', error);
       return {
         success: false,
         message: 'Failed to store video',
         error: String(error)
-      }
+      };
     }
   })
 
@@ -251,11 +320,31 @@ export function registerIpcHandlers(
   // Store camera recording as separate file during screen recording
   ipcMain.handle('store-camera-recording', async (_, videoData: ArrayBuffer, fileName: string) => {
     try {
-      const videoPath = path.join(RECORDINGS_DIR, fileName);
-      await fs.writeFile(videoPath, Buffer.from(videoData));
-      return { success: true, path: videoPath };
+      return await safeWriteRecording(
+        RECORDINGS_DIR,
+        fileName,
+        videoData,
+        MAX_CAMERA_SIZE,
+        ['webm', 'mp4', 'mov']
+      );
     } catch (error) {
       console.error('Failed to store camera recording:', error);
+      return { success: false, error: String(error) };
+    }
+  });
+
+  // Store microphone audio recording as separate file
+  ipcMain.handle('store-audio-recording', async (_, audioData: ArrayBuffer, fileName: string) => {
+    try {
+      return await safeWriteRecording(
+        RECORDINGS_DIR,
+        fileName,
+        audioData,
+        MAX_AUDIO_SIZE,
+        ['webm']
+      );
+    } catch (error) {
+      console.error('Failed to store audio recording:', error);
       return { success: false, error: String(error) };
     }
   });

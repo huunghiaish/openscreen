@@ -1,60 +1,54 @@
 import { useState, useRef, useEffect } from "react";
 import { fixWebmDuration } from "@fix-webm-duration/fix";
+import {
+  TARGET_FRAME_RATE,
+  TARGET_WIDTH,
+  TARGET_HEIGHT,
+  AUDIO_BITRATE,
+  AUDIO_FFT_SIZE,
+  CAMERA_BITRATE,
+  CAMERA_WIDTH,
+  CAMERA_HEIGHT,
+  CAMERA_FRAME_RATE,
+  selectVideoMimeType,
+  selectAudioMimeType,
+  computeVideoBitrate,
+  calculateAudioLevel,
+} from "@/lib/recording-constants";
 
 interface UseScreenRecorderOptions {
   cameraDeviceId?: string | null;
+  micDeviceId?: string | null;
 }
 
 type UseScreenRecorderReturn = {
   recording: boolean;
   toggleRecording: () => void;
   cameraStream: MediaStream | null;
+  micStream: MediaStream | null;
+  micAudioLevel: number;
 };
 
 export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseScreenRecorderReturn {
-  const { cameraDeviceId } = options;
+  const { cameraDeviceId, micDeviceId } = options;
 
   const [recording, setRecording] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [micStream, setMicStream] = useState<MediaStream | null>(null);
+  const [micAudioLevel, setMicAudioLevel] = useState(0);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const cameraRecorder = useRef<MediaRecorder | null>(null);
-  const cameraStreamRef = useRef<MediaStream | null>(null); // Ref to avoid stale closure
+  const micRecorder = useRef<MediaRecorder | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const micAudioContext = useRef<AudioContext | null>(null);
+  const micAnalyser = useRef<AnalyserNode | null>(null);
+  const micAnimationFrame = useRef<number | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
   const cameraChunks = useRef<Blob[]>([]);
+  const micChunks = useRef<Blob[]>([]);
   const startTime = useRef<number>(0);
-
-  // Target visually lossless 4K @ 60fps; fall back gracefully when hardware cannot keep up
-  const TARGET_FRAME_RATE = 60;
-  const TARGET_WIDTH = 3840;
-  const TARGET_HEIGHT = 2160;
-  const FOUR_K_PIXELS = TARGET_WIDTH * TARGET_HEIGHT;
-  const selectMimeType = () => {
-    const preferred = [
-      "video/webm;codecs=av1",
-      "video/webm;codecs=h264",
-      "video/webm;codecs=vp9",
-      "video/webm;codecs=vp8",
-      "video/webm"
-    ];
-
-    return preferred.find(type => MediaRecorder.isTypeSupported(type)) ?? "video/webm";
-  };
-
-  const computeBitrate = (width: number, height: number) => {
-    const pixels = width * height;
-    const highFrameRateBoost = TARGET_FRAME_RATE >= 60 ? 1.7 : 1;
-
-    if (pixels >= FOUR_K_PIXELS) {
-      return Math.round(45_000_000 * highFrameRateBoost);
-    }
-
-    if (pixels >= 2560 * 1440) {
-      return Math.round(28_000_000 * highFrameRateBoost);
-    }
-
-    return Math.round(18_000_000 * highFrameRateBoost);
-  };
 
   const stopCameraRecording = useRef(async (): Promise<Blob | null> => {
     return new Promise((resolve) => {
@@ -69,6 +63,30 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       };
       cameraRecorder.current.stop();
     });
+  });
+
+  const stopMicRecording = useRef(async (): Promise<Blob | null> => {
+    return new Promise((resolve) => {
+      if (!micRecorder.current || micRecorder.current.state !== 'recording') {
+        resolve(null);
+        return;
+      }
+      micRecorder.current.onstop = () => {
+        const blob = new Blob(micChunks.current, { type: selectAudioMimeType() });
+        micChunks.current = [];
+        resolve(blob);
+      };
+      micRecorder.current.stop();
+    });
+  });
+
+  // Update mic audio level for VU meter at ~60fps
+  const updateMicAudioLevel = useRef(() => {
+    if (!micAnalyser.current) return;
+    const dataArray = new Uint8Array(micAnalyser.current.fftSize);
+    micAnalyser.current.getByteTimeDomainData(dataArray);
+    setMicAudioLevel(calculateAudioLevel(dataArray));
+    micAnimationFrame.current = requestAnimationFrame(updateMicAudioLevel.current);
   });
 
   const stopRecording = useRef(() => {
@@ -103,6 +121,9 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       if (cameraRecorder.current?.state === "recording") {
         cameraRecorder.current.stop();
       }
+      if (micRecorder.current?.state === "recording") {
+        micRecorder.current.stop();
+      }
       if (stream.current) {
         stream.current.getTracks().forEach(track => track.stop());
         stream.current = null;
@@ -112,30 +133,66 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         cameraStreamRef.current.getTracks().forEach(track => track.stop());
         cameraStreamRef.current = null;
       }
+      // Clean up mic stream and audio context
+      if (micAnimationFrame.current) {
+        cancelAnimationFrame(micAnimationFrame.current);
+        micAnimationFrame.current = null;
+      }
+      if (micAudioContext.current) {
+        micAudioContext.current.close();
+        micAudioContext.current = null;
+        micAnalyser.current = null;
+      }
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach(track => track.stop());
+        micStreamRef.current = null;
+      }
     };
   }, []);
 
   // Start camera capture if deviceId provided
   const startCameraCapture = async (deviceId: string): Promise<MediaStream | null> => {
-    // Validate deviceId
     if (!deviceId || typeof deviceId !== 'string' || deviceId.trim() === '') {
       console.warn('Invalid camera deviceId provided');
       return null;
     }
-
     try {
-      const camStream = await navigator.mediaDevices.getUserMedia({
+      return await navigator.mediaDevices.getUserMedia({
         video: {
           deviceId: { exact: deviceId },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 },
+          width: { ideal: CAMERA_WIDTH },
+          height: { ideal: CAMERA_HEIGHT },
+          frameRate: { ideal: CAMERA_FRAME_RATE },
         },
         audio: false,
       });
-      return camStream;
     } catch (err) {
       console.warn('Camera capture failed, continuing without camera:', err);
+      return null;
+    }
+  };
+
+  // Start microphone capture with audio level metering
+  const startMicCapture = async (deviceId: string): Promise<MediaStream | null> => {
+    if (!deviceId || typeof deviceId !== 'string' || deviceId.trim() === '') {
+      console.warn('Invalid mic deviceId provided');
+      return null;
+    }
+    try {
+      const audioStream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      // Setup Web Audio API for real-time level metering
+      micAudioContext.current = new AudioContext();
+      const source = micAudioContext.current.createMediaStreamSource(audioStream);
+      micAnalyser.current = micAudioContext.current.createAnalyser();
+      micAnalyser.current.fftSize = AUDIO_FFT_SIZE;
+      source.connect(micAnalyser.current);
+      updateMicAudioLevel.current();
+      return audioStream;
+    } catch (err) {
+      console.warn('Microphone capture failed, continuing without mic:', err);
       return null;
     }
   };
@@ -152,22 +209,28 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       if (cameraDeviceId) {
         const camStream = await startCameraCapture(cameraDeviceId);
         if (camStream) {
-          cameraStreamRef.current = camStream; // Store in ref for reliable cleanup
+          cameraStreamRef.current = camStream;
           setCameraStream(camStream);
-          // Start camera recording
           cameraChunks.current = [];
-          const cameraMimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-            ? 'video/webm;codecs=vp9'
-            : 'video/webm';
-          const camRecorder = new MediaRecorder(camStream, {
-            mimeType: cameraMimeType,
-            videoBitsPerSecond: 2_500_000,
-          });
-          camRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) cameraChunks.current.push(e.data);
-          };
+          const cameraMimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+          const camRecorder = new MediaRecorder(camStream, { mimeType: cameraMimeType, videoBitsPerSecond: CAMERA_BITRATE });
+          camRecorder.ondataavailable = (e) => { if (e.data.size > 0) cameraChunks.current.push(e.data); };
           cameraRecorder.current = camRecorder;
           camRecorder.start(1000);
+        }
+      }
+
+      // Start mic capture if deviceId provided
+      if (micDeviceId) {
+        const audioStream = await startMicCapture(micDeviceId);
+        if (audioStream) {
+          micStreamRef.current = audioStream;
+          setMicStream(audioStream);
+          micChunks.current = [];
+          const audioRecorder = new MediaRecorder(audioStream, { mimeType: selectAudioMimeType(), audioBitsPerSecond: AUDIO_BITRATE });
+          audioRecorder.ondataavailable = (e) => { if (e.data.size > 0) micChunks.current.push(e.data); };
+          micRecorder.current = audioRecorder;
+          audioRecorder.start(1000);
         }
       }
 
@@ -207,8 +270,8 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       const width = Math.floor((settings.width ?? 1920) / 2) * 2;
       const height = Math.floor((settings.height ?? 1080) / 2) * 2;
 
-      const videoBitsPerSecond = computeBitrate(width, height);
-      const mimeType = selectMimeType();
+      const videoBitsPerSecond = computeVideoBitrate(width, height);
+      const mimeType = selectVideoMimeType();
 
       console.log(
         `Recording at ${width}x${height} @ ${frameRate ?? TARGET_FRAME_RATE}fps using ${mimeType} / ${Math.round(
@@ -255,12 +318,40 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             }
           }
 
+          // Store mic recording if exists
+          const micBlob = await stopMicRecording.current();
+          if (micBlob && micBlob.size > 0) {
+            const micFileName = `mic-${timestamp}.webm`;
+            const micBuffer = await micBlob.arrayBuffer();
+            const micResult = await window.electronAPI.storeAudioRecording(micBuffer, micFileName);
+            if (!micResult.success) {
+              console.warn('Failed to store mic recording:', micResult.error);
+            }
+          }
+
           // Clean up camera stream using ref (avoids stale closure)
           if (cameraStreamRef.current) {
             cameraStreamRef.current.getTracks().forEach(track => track.stop());
             cameraStreamRef.current = null;
             setCameraStream(null);
           }
+
+          // Clean up mic stream and audio context
+          if (micAnimationFrame.current) {
+            cancelAnimationFrame(micAnimationFrame.current);
+            micAnimationFrame.current = null;
+          }
+          if (micAudioContext.current) {
+            micAudioContext.current.close();
+            micAudioContext.current = null;
+            micAnalyser.current = null;
+          }
+          if (micStreamRef.current) {
+            micStreamRef.current.getTracks().forEach(track => track.stop());
+            micStreamRef.current = null;
+            setMicStream(null);
+          }
+          setMicAudioLevel(0);
 
           if (videoResult.path) {
             await window.electronAPI.setCurrentVideoPath(videoResult.path);
@@ -290,5 +381,5 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     recording ? stopRecording.current() : startRecording();
   };
 
-  return { recording, toggleRecording, cameraStream };
+  return { recording, toggleRecording, cameraStream, micStream, micAudioLevel };
 }

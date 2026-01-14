@@ -47,6 +47,11 @@ interface Window {
       path?: string
       error?: string
     }>
+    storeAudioRecording: (audioData: ArrayBuffer, fileName: string) => Promise<{
+      success: boolean
+      path?: string
+      error?: string
+    }>
     getCameraVideoPath: (mainVideoPath: string) => Promise<{
       success: boolean
       path?: string | null
