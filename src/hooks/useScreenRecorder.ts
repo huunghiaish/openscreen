@@ -76,10 +76,8 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       if (stream.current) {
         stream.current.getTracks().forEach(track => track.stop());
       }
-      // Stop camera recording if active
-      if (cameraRecorder.current?.state === 'recording') {
-        cameraRecorder.current.stop();
-      }
+      // NOTE: Don't stop cameraRecorder here! Let stopCameraRecording handle it
+      // in the main recorder's onstop handler to ensure blob is captured properly
       mediaRecorder.current.stop();
       setRecording(false);
 
@@ -173,6 +171,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         }
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Electron requires non-standard constraints
       const mediaStream = await (navigator.mediaDevices as any).getUserMedia({
         audio: false,
         video: {
@@ -201,11 +200,12 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         console.warn("Unable to lock 4K/60fps constraints, using best available track settings.", error);
       }
 
-      let { width = 1920, height = 1080, frameRate = TARGET_FRAME_RATE } = videoTrack.getSettings();
+      const settings = videoTrack.getSettings();
+      const frameRate = settings.frameRate ?? TARGET_FRAME_RATE;
 
       // Ensure dimensions are divisible by 2 for VP9/AV1 codec compatibility
-      width = Math.floor(width / 2) * 2;
-      height = Math.floor(height / 2) * 2;
+      const width = Math.floor((settings.width ?? 1920) / 2) * 2;
+      const height = Math.floor((settings.height ?? 1080) / 2) * 2;
 
       const videoBitsPerSecond = computeBitrate(width, height);
       const mimeType = selectMimeType();
