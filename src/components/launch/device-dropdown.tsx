@@ -17,6 +17,10 @@ interface DeviceDropdownProps {
   disabled?: boolean;
   /** Extra content rendered above device list (level meter, settings) */
   headerContent?: ReactNode;
+  /** Enable click-to-toggle behavior (single click = toggle on/off, dropdown via arrow) */
+  enableClickToggle?: boolean;
+  /** Last used device ID for toggle-on (when enableClickToggle is true) */
+  lastUsedDeviceId?: string | null;
 }
 
 export function DeviceDropdown({
@@ -27,6 +31,8 @@ export function DeviceDropdown({
   onSelectDevice,
   disabled = false,
   headerContent,
+  enableClickToggle = false,
+  lastUsedDeviceId,
 }: DeviceDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
@@ -132,8 +138,42 @@ export function DeviceDropdown({
     [onSelectDevice]
   );
 
-  const isActive = selectedDeviceId !== null;
   const selectedIndex = getSelectedIndex();
+
+  // Handle icon click - either toggle or open dropdown
+  // Use fresh values directly instead of stale closure
+  const handleIconClick = () => {
+    if (enableClickToggle) {
+      // Toggle behavior: turn off if active, turn on with last device or first available
+      const currentlyActive = selectedDeviceId !== null;
+      if (currentlyActive) {
+        onSelectDevice(null);
+      } else {
+        // Turn on: use last used device or first available device
+        const deviceToSelect = lastUsedDeviceId && devices.some(d => d.deviceId === lastUsedDeviceId)
+          ? lastUsedDeviceId
+          : devices.length > 0
+            ? devices[0].deviceId
+            : null;
+        if (deviceToSelect) {
+          onSelectDevice(deviceToSelect);
+        }
+      }
+    } else {
+      // Default behavior: open dropdown
+      setIsOpen(!isOpen);
+      if (!isOpen) setFocusedIndex(Math.max(0, selectedIndex));
+    }
+  };
+
+  const isActive = selectedDeviceId !== null;
+
+  // Handle dropdown arrow click (for toggle mode)
+  const handleDropdownArrowClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsOpen(!isOpen);
+    if (!isOpen) setFocusedIndex(Math.max(0, selectedIndex));
+  };
 
   return (
     <div
@@ -141,22 +181,37 @@ export function DeviceDropdown({
       className="relative"
       onKeyDown={handleKeyDown}
     >
-      <Button
-        variant="link"
-        size="icon"
-        onClick={() => {
-          setIsOpen(!isOpen);
-          if (!isOpen) setFocusedIndex(Math.max(0, selectedIndex));
-        }}
-        disabled={disabled}
-        className="bg-transparent hover:bg-transparent px-1"
-        style={{ opacity: isActive ? 1 : 0.5 }}
-        aria-haspopup="listbox"
-        aria-expanded={isOpen}
-        aria-label={ariaLabel}
-      >
-        {icon}
-      </Button>
+      <div className="flex items-center">
+        <Button
+          variant="link"
+          size="icon"
+          onClick={handleIconClick}
+          disabled={disabled}
+          className="bg-transparent hover:bg-transparent px-1"
+          style={{ opacity: isActive ? 1 : 0.5 }}
+          aria-haspopup={enableClickToggle ? undefined : 'listbox'}
+          aria-expanded={enableClickToggle ? undefined : isOpen}
+          aria-label={ariaLabel}
+          aria-pressed={enableClickToggle ? isActive : undefined}
+        >
+          {icon}
+        </Button>
+        {/* Dropdown arrow for toggle mode */}
+        {enableClickToggle && (
+          <button
+            type="button"
+            onClick={handleDropdownArrowClick}
+            disabled={disabled}
+            className="text-white/50 hover:text-white/80 -ml-1 pr-1"
+            style={{ opacity: disabled ? 0.3 : 0.6, fontSize: 8 }}
+            aria-label={`${ariaLabel} options`}
+            aria-haspopup="listbox"
+            aria-expanded={isOpen}
+          >
+            ▼
+          </button>
+        )}
+      </div>
 
       {isOpen && (
         <div

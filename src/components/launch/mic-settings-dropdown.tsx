@@ -1,7 +1,9 @@
 /**
  * Microphone device selection dropdown with audio level meter.
  * Shows real-time VU meter when mic is active.
+ * Click icon to toggle mic on/off, click arrow for device selection.
  */
+import { useRef, useCallback } from 'react';
 import { FiMic, FiMicOff } from 'react-icons/fi';
 import { DeviceDropdown } from './device-dropdown';
 import { AudioLevelMeter } from '@/components/audio-level-meter';
@@ -22,6 +24,16 @@ export function MicSettingsDropdown({
   disabled = false,
 }: MicSettingsDropdownProps) {
   const isActive = selectedMicId !== null;
+  // Track last used mic for toggle-on behavior
+  const lastUsedMicRef = useRef<string | null>(selectedMicId);
+
+  // Update last used mic when a mic is selected (not when deselected)
+  const handleMicSelect = useCallback((deviceId: string | null) => {
+    if (deviceId !== null) {
+      lastUsedMicRef.current = deviceId;
+    }
+    onSelectMic(deviceId);
+  }, [onSelectMic]);
 
   const levelMeterContent = isActive ? (
     <div className="px-3 py-2">
@@ -41,12 +53,14 @@ export function MicSettingsDropdown({
           <FiMicOff size={14} className="text-white/50" />
         )
       }
-      ariaLabel="Select microphone"
+      ariaLabel="Toggle microphone"
       devices={microphones}
       selectedDeviceId={selectedMicId}
-      onSelectDevice={onSelectMic}
+      onSelectDevice={handleMicSelect}
       disabled={disabled}
       headerContent={levelMeterContent}
+      enableClickToggle={true}
+      lastUsedDeviceId={lastUsedMicRef.current}
     />
   );
 }

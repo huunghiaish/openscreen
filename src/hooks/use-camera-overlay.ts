@@ -96,19 +96,23 @@ export function useCameraOverlay({
     }
   }, [previewEnabled, cameraEnabled, cameraDeviceId, recording]);
 
-  // Handle camera enable (only when not recording)
+  // Handle camera enable/disable (only when not recording)
   useEffect(() => {
     const wasCameraEnabled = prevCameraEnabledRef.current;
     prevCameraEnabledRef.current = cameraEnabled;
 
-    // Only respond to camera enable, not disable
-    if (wasCameraEnabled || !cameraEnabled) return;
+    // Skip if no change
+    if (wasCameraEnabled === cameraEnabled) return;
     if (recording) return;
 
     const api = getCameraOverlayAPI();
 
-    if (previewEnabled && cameraDeviceId) {
+    if (cameraEnabled && previewEnabled && cameraDeviceId) {
+      // Camera just enabled - show overlay
       api.showCameraOverlay?.(cameraDeviceId);
+    } else if (!cameraEnabled && wasCameraEnabled) {
+      // Camera just disabled - hide overlay
+      api.hideCameraOverlay?.();
     }
   }, [cameraEnabled, previewEnabled, cameraDeviceId, recording]);
 }

@@ -1,7 +1,9 @@
 /**
  * Camera device selection dropdown with position/size settings.
  * Shows camera list and overlay configuration options.
+ * Click icon to toggle camera on/off, click arrow for device selection.
  */
+import { useRef, useCallback } from 'react';
 import { FiVideo, FiVideoOff } from 'react-icons/fi';
 import { DeviceDropdown } from './device-dropdown';
 import type { CameraPosition, CameraSize } from '@/types/media-devices';
@@ -41,6 +43,16 @@ export function CameraSettingsDropdown({
   disabled = false,
 }: CameraSettingsDropdownProps) {
   const isActive = selectedCameraId !== null;
+  // Track last used camera for toggle-on behavior
+  const lastUsedCameraRef = useRef<string | null>(selectedCameraId);
+
+  // Update last used camera when a camera is selected (not when deselected)
+  const handleCameraSelect = useCallback((deviceId: string | null) => {
+    if (deviceId !== null) {
+      lastUsedCameraRef.current = deviceId;
+    }
+    onSelectCamera(deviceId);
+  }, [onSelectCamera]);
 
   const settingsContent = (
     <>
@@ -95,12 +107,14 @@ export function CameraSettingsDropdown({
           <FiVideoOff size={14} className="text-white/50" />
         )
       }
-      ariaLabel="Select camera"
+      ariaLabel="Toggle camera"
       devices={cameras}
       selectedDeviceId={selectedCameraId}
-      onSelectDevice={onSelectCamera}
+      onSelectDevice={handleCameraSelect}
       disabled={disabled}
       headerContent={settingsContent}
+      enableClickToggle={true}
+      lastUsedDeviceId={lastUsedCameraRef.current}
     />
   );
 }
