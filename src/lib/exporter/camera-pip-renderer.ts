@@ -20,7 +20,9 @@ export class CameraPipRenderer {
    * Loads video metadata before returning.
    */
   async initialize(): Promise<boolean> {
-    if (!this.config.videoUrl) return false;
+    if (!this.config.videoUrl) {
+      return false;
+    }
 
     // Create camera video element
     this.cameraVideo = document.createElement('video');
@@ -28,6 +30,8 @@ export class CameraPipRenderer {
     this.cameraVideo.muted = true;
     this.cameraVideo.playsInline = true;
     this.cameraVideo.preload = 'metadata';
+    // Allow cross-origin for file:// URLs in Electron
+    this.cameraVideo.crossOrigin = 'anonymous';
 
     // Wait for metadata to load
     try {
@@ -48,15 +52,10 @@ export class CameraPipRenderer {
     this.cameraCtx = this.cameraCanvas.getContext('2d');
 
     if (!this.cameraCtx) {
-      console.warn('[CameraPipRenderer] Failed to get 2D context for camera canvas');
       this.destroy();
       return false;
     }
 
-    console.log(
-      `[CameraPipRenderer] Initialized: ${this.cameraVideo.videoWidth}x${this.cameraVideo.videoHeight}, ` +
-      `duration: ${this.cameraVideo.duration}s`
-    );
     return true;
   }
 
@@ -87,7 +86,9 @@ export class CameraPipRenderer {
     canvasHeight: number,
     timeMs: number
   ): Promise<void> {
-    if (!this.isReady()) return;
+    if (!this.isReady()) {
+      return;
+    }
     if (!this.cameraVideo || !this.cameraCanvas || !this.cameraCtx) return;
 
     const { position, size, borderRadius } = this.config.pipConfig;
@@ -99,10 +100,20 @@ export class CameraPipRenderer {
       return;
     }
 
-    this.cameraVideo.currentTime = timeSeconds;
-    await new Promise<void>((resolve) => {
-      this.cameraVideo!.onseeked = () => resolve();
-    });
+    // Seek to target time - use seeked event with timeout fallback
+    const needsSeek = Math.abs(this.cameraVideo.currentTime - timeSeconds) > 0.01;
+    if (needsSeek) {
+      this.cameraVideo.currentTime = timeSeconds;
+      await new Promise<void>((resolve) => {
+        const onSeeked = () => {
+          this.cameraVideo?.removeEventListener('seeked', onSeeked);
+          resolve();
+        };
+        this.cameraVideo!.addEventListener('seeked', onSeeked, { once: true });
+        // Timeout fallback in case seeked doesn't fire
+        setTimeout(resolve, 100);
+      });
+    }
 
     // Draw camera frame to its canvas
     this.cameraCtx.drawImage(this.cameraVideo, 0, 0);

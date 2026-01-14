@@ -73,6 +73,8 @@ export default function VideoEditor() {
   const [cameraPipConfig, setCameraPipConfig] = useState<CameraPipConfig>(
     DEFAULT_CAMERA_PIP_CONFIG
   );
+  // Ref to avoid stale closure in export callback
+  const cameraVideoPathRef = useRef<string | null>(null);
 
   // Camera PiP config change handler
   const handleCameraPipConfigChange = useCallback((updates: Partial<CameraPipConfig>) => {
@@ -132,9 +134,12 @@ export default function VideoEditor() {
 
       const result = await window.electronAPI.getCameraVideoPath(mainPath);
       if (result.success && result.path) {
-        setCameraVideoPath(toFileUrl(result.path));
+        const cameraUrl = toFileUrl(result.path);
+        setCameraVideoPath(cameraUrl);
+        cameraVideoPathRef.current = cameraUrl; // Update ref for export callback
       } else {
         setCameraVideoPath(null);
+        cameraVideoPathRef.current = null;
       }
     }
 
@@ -573,7 +578,7 @@ export default function VideoEditor() {
             setExportProgress(progress);
           },
           // Camera PiP config
-          cameraVideoUrl: cameraVideoPath || undefined,
+          cameraVideoUrl: cameraVideoPathRef.current || undefined,
           cameraPipConfig,
         });
 
@@ -701,7 +706,7 @@ export default function VideoEditor() {
             setExportProgress(progress);
           },
           // Camera PiP config
-          cameraVideoUrl: cameraVideoPath || undefined,
+          cameraVideoUrl: cameraVideoPathRef.current || undefined,
           cameraPipConfig,
         });
 
