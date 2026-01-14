@@ -2,7 +2,7 @@ import type { ExportConfig, ExportProgress, ExportResult } from './types';
 import { VideoFileDecoder } from './videoDecoder';
 import { FrameRenderer } from './frameRenderer';
 import { VideoMuxer } from './muxer';
-import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion } from '@/components/video-editor/types';
+import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion, CameraPipConfig } from '@/components/video-editor/types';
 
 interface VideoExporterConfig extends ExportConfig {
   videoUrl: string;
@@ -21,6 +21,9 @@ interface VideoExporterConfig extends ExportConfig {
   previewWidth?: number;
   previewHeight?: number;
   onProgress?: (progress: ExportProgress) => void;
+  // Camera PiP config
+  cameraVideoUrl?: string;
+  cameraPipConfig?: CameraPipConfig;
 }
 
 export class VideoExporter {
@@ -100,6 +103,13 @@ export class VideoExporter {
         annotationRegions: this.config.annotationRegions,
         previewWidth: this.config.previewWidth,
         previewHeight: this.config.previewHeight,
+        // Pass camera PiP config if provided
+        cameraExport: this.config.cameraVideoUrl && this.config.cameraPipConfig
+          ? {
+              videoUrl: this.config.cameraVideoUrl,
+              pipConfig: this.config.cameraPipConfig,
+            }
+          : undefined,
       });
       await this.renderer.initialize();
 
@@ -170,7 +180,7 @@ export class VideoExporter {
         const canvas = this.renderer!.getCanvas();
 
         // Create VideoFrame from canvas on GPU without reading pixels
-        // @ts-ignore - colorSpace not in TypeScript definitions but works at runtime
+        // @ts-expect-error - colorSpace not in TypeScript definitions but works at runtime
         const exportFrame = new VideoFrame(canvas, {
           timestamp,
           duration: frameDuration,
@@ -247,7 +257,7 @@ export class VideoExporter {
         // Capture decoder config metadata from encoder output
         if (meta?.decoderConfig?.description && !videoDescription) {
           const desc = meta.decoderConfig.description;
-          videoDescription = new Uint8Array(desc instanceof ArrayBuffer ? desc : (desc as any));
+          videoDescription = new Uint8Array(desc instanceof ArrayBuffer ? desc : (desc as ArrayBufferLike));
           this.videoDescription = videoDescription;
         }
         // Capture colorSpace from encoder metadata if provided

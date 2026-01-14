@@ -9,8 +9,9 @@ import { useState } from "react";
 import Block from '@uiw/react-color-block';
 import { Trash2, Download, Crop, X, Bug, Upload, Star, Film, Image } from "lucide-react";
 import { toast } from "sonner";
-import type { ZoomDepth, CropRegion, AnnotationRegion, AnnotationType } from "./types";
+import type { ZoomDepth, CropRegion, AnnotationRegion, AnnotationType, FigureData, CameraPipConfig } from "./types";
 import { CropControl } from "./CropControl";
+import { CameraPipSettings } from "./CameraPipSettings";
 import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 import { AnnotationSettingsPanel } from "./AnnotationSettingsPanel";
 import { type AspectRatio } from "@/utils/aspectRatioUtils";
@@ -87,8 +88,12 @@ interface SettingsPanelProps {
   onAnnotationContentChange?: (id: string, content: string) => void;
   onAnnotationTypeChange?: (id: string, type: AnnotationType) => void;
   onAnnotationStyleChange?: (id: string, style: Partial<AnnotationRegion['style']>) => void;
-  onAnnotationFigureDataChange?: (id: string, figureData: any) => void;
+  onAnnotationFigureDataChange?: (id: string, figureData: FigureData) => void;
   onAnnotationDelete?: (id: string) => void;
+  // Camera PiP settings
+  cameraVideoPath?: string | null;
+  cameraPipConfig?: CameraPipConfig;
+  onCameraPipConfigChange?: (config: Partial<CameraPipConfig>) => void;
 }
 
 export default SettingsPanel;
@@ -144,6 +149,9 @@ export function SettingsPanel({
   onAnnotationStyleChange,
   onAnnotationFigureDataChange,
   onAnnotationDelete,
+  cameraVideoPath,
+  cameraPipConfig,
+  onCameraPipConfigChange,
 }: SettingsPanelProps) {
   const [wallpaperPaths, setWallpaperPaths] = useState<string[]>([]);
   const [customImages, setCustomImages] = useState<string[]>([]);
@@ -320,6 +328,14 @@ export function SettingsPanel({
         )}
       </div>
 
+      {/* Camera PiP Settings - only visible when camera video exists */}
+      {cameraVideoPath && cameraPipConfig && onCameraPipConfigChange && (
+        <CameraPipSettings
+          config={cameraPipConfig}
+          onConfigChange={onCameraPipConfigChange}
+        />
+      )}
+
       <div className="mb-6">
         <div className="grid grid-cols-2 gap-3">
           {/* Motion Blur Switch */}
@@ -451,8 +467,8 @@ export function SettingsPanel({
           <TabsTrigger value="gradient" className="data-[state=active]:bg-[#34B27B] data-[state=active]:text-white text-slate-400 py-2 rounded-lg transition-all">Gradient</TabsTrigger>
         </TabsList>
         
-        <div className="min-h-[220px] max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
-          <TabsContent value="image" className="mt-0 space-y-3 px-2">
+        <div className="min-h-[220px] max-h-[320px] overflow-y-auto overflow-x-hidden custom-scrollbar pr-2">
+          <TabsContent value="image" className="mt-0 space-y-3 px-2 pb-2">
             {/* Upload Button */}
             <input
               type="file"
@@ -508,7 +524,7 @@ export function SettingsPanel({
                     const clean = (s: string) => s.replace(/^file:\/\//, '').replace(/^\//, '')
                     if (clean(selected).endsWith(clean(path))) return true;
                     if (clean(path).endsWith(clean(selected))) return true;
-                  } catch {}
+                  } catch { /* ignore path comparison errors */ }
                   return false;
                 })();
                 return (
@@ -530,7 +546,7 @@ export function SettingsPanel({
             </div>
           </TabsContent>
           
-          <TabsContent value="color" className="mt-0 px-2">
+          <TabsContent value="color" className="mt-0 px-2 pb-4">
             <div className="p-1">
               <Block
                 color={selectedColor}
@@ -547,7 +563,7 @@ export function SettingsPanel({
             </div>
           </TabsContent>
           
-          <TabsContent value="gradient" className="mt-0 px-2">
+          <TabsContent value="gradient" className="mt-0 px-2 pb-2">
             <div className="grid grid-cols-6 gap-2.5">
               {GRADIENTS.map((g, idx) => (
                 <div
@@ -569,7 +585,7 @@ export function SettingsPanel({
         </div>
       </Tabs>
 
-      <div className="mt-4 pt-4 border-t border-white/5">
+      <div className="mt-20 pt-4 border-t border-white/5">
         {/* Format Selection */}
         <div className="mb-4">
           <div className="mb-2 text-xs font-medium text-slate-400 uppercase tracking-wider">Export Format</div>
@@ -671,7 +687,7 @@ export function SettingsPanel({
             <div>
               <div className="mb-1.5 text-xs font-medium text-slate-400">Output Size</div>
               <div className="bg-white/5 border border-white/5 p-1 w-full grid grid-cols-3 h-auto rounded-xl">
-                {Object.entries(GIF_SIZE_PRESETS).map(([key, preset]) => (
+                {Object.keys(GIF_SIZE_PRESETS).map((key) => (
                   <button
                     key={key}
                     onClick={() => onGifSizePresetChange?.(key as GifSizePreset)}

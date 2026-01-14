@@ -2,7 +2,8 @@ import type React from "react";
 import { useEffect, useRef, useImperativeHandle, forwardRef, useState, useMemo, useCallback } from "react";
 import { getAssetPath } from "@/lib/assetPath";
 import { Application, Container, Sprite, Graphics, BlurFilter, Texture, VideoSource } from 'pixi.js';
-import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth, type TrimRegion, type AnnotationRegion } from "./types";
+import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth, type TrimRegion, type AnnotationRegion, type CameraPipConfig, DEFAULT_CAMERA_PIP_CONFIG } from "./types";
+import { CameraPipOverlay, type CameraPipOverlayRef } from "./CameraPipOverlay";
 import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA } from "./videoPlayback/constants";
 import { clamp01 } from "./videoPlayback/mathUtils";
 import { findDominantRegion } from "./videoPlayback/zoomRegionUtils";
@@ -41,6 +42,8 @@ interface VideoPlaybackProps {
   onSelectAnnotation?: (id: string | null) => void;
   onAnnotationPositionChange?: (id: string, position: { x: number; y: number }) => void;
   onAnnotationSizeChange?: (id: string, size: { width: number; height: number }) => void;
+  cameraVideoPath?: string | null;
+  cameraPipConfig?: CameraPipConfig;
 }
 
 export interface VideoPlaybackRef {
@@ -80,6 +83,8 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   onSelectAnnotation,
   onAnnotationPositionChange,
   onAnnotationSizeChange,
+  cameraVideoPath,
+  cameraPipConfig = DEFAULT_CAMERA_PIP_CONFIG,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -92,6 +97,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const [videoReady, setVideoReady] = useState(false);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const focusIndicatorRef = useRef<HTMLDivElement | null>(null);
+  const cameraPipRef = useRef<CameraPipOverlayRef>(null);
   const currentTimeRef = useRef(0);
   const zoomRegionsRef = useRef<ZoomRegion[]>([]);
   const selectedZoomIdRef = useRef<string | null>(null);
@@ -291,7 +297,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
     try {
       event.currentTarget.releasePointerCapture(event.pointerId);
     } catch {
-      
+      // Ignore pointer capture release errors
     }
   };
 
@@ -564,16 +570,19 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
     video.addEventListener('ended', handlePause);
     video.addEventListener('seeked', handleSeeked);
     video.addEventListener('seeking', handleSeeking);
-    
+
+    // Capture ref for cleanup (React hooks lint rule)
+    const animRef = timeUpdateAnimationRef;
+
     return () => {
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
       video.removeEventListener('ended', handlePause);
       video.removeEventListener('seeked', handleSeeked);
       video.removeEventListener('seeking', handleSeeking);
-      
-      if (timeUpdateAnimationRef.current) {
-        cancelAnimationFrame(timeUpdateAnimationRef.current);
+
+      if (animRef.current) {
+        cancelAnimationFrame(animRef.current);
       }
       
       if (videoSprite) {
@@ -595,6 +604,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       
       videoSpriteRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pixiReady, videoReady, onTimeUpdate, updateOverlayForRegion]);
 
   useEffect(() => {
@@ -867,6 +877,15 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
               />
             ));
           })()}
+          {cameraVideoPath && cameraPipConfig?.enabled && (
+            <CameraPipOverlay
+              ref={cameraPipRef}
+              videoPath={cameraVideoPath}
+              config={cameraPipConfig}
+              containerWidth={overlayRef.current?.clientWidth || 800}
+              mainVideoRef={videoRef}
+            />
+          )}
         </div>
       )}
       <video

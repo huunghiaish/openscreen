@@ -14,8 +14,8 @@ interface Window {
     getSources: (opts: Electron.SourcesOptions) => Promise<ProcessedDesktopSource[]>
     switchToEditor: () => Promise<void>
     openSourceSelector: () => Promise<void>
-    selectSource: (source: any) => Promise<any>
-    getSelectedSource: () => Promise<any>
+    selectSource: (source: ProcessedDesktopSource) => Promise<ProcessedDesktopSource>
+    getSelectedSource: () => Promise<ProcessedDesktopSource | null>
     storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{
       success: boolean
       path?: string
@@ -42,5 +42,20 @@ interface Window {
     setCurrentVideoPath: (path: string) => Promise<{ success: boolean }>
     getCurrentVideoPath: () => Promise<{ success: boolean; path?: string }>
     clearCurrentVideoPath: () => Promise<{ success: boolean }>
+    storeCameraRecording: (videoData: ArrayBuffer, fileName: string) => Promise<{
+      success: boolean
+      path?: string
+      error?: string
+    }>
+    getCameraVideoPath: (mainVideoPath: string) => Promise<{
+      success: boolean
+      path?: string | null
+      error?: string
+    }>
+    showCameraOverlay: (deviceId: string) => Promise<void>
+    hideCameraOverlay: () => Promise<void>
+    hudOverlayHide: () => void
+    hudOverlayClose: () => void
+    getPlatform: () => Promise<string>
   }
 }

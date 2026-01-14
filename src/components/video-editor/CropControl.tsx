@@ -74,32 +74,32 @@ export function CropControl({ videoElement, cropRegion, onCropChange }: CropCont
     const deltaX = currentX - dragStart.x;
     const deltaY = currentY - dragStart.y;
 
-    let newCrop = { ...initialCrop };
+    const cropUpdate = { ...initialCrop };
 
     switch (isDragging) {
       case 'top': {
         const newY = Math.max(0, initialCrop.y + deltaY);
         const bottom = initialCrop.y + initialCrop.height;
-        newCrop.y = Math.min(newY, bottom - 0.1);
-        newCrop.height = bottom - newCrop.y;
+        cropUpdate.y = Math.min(newY, bottom - 0.1);
+        cropUpdate.height = bottom - cropUpdate.y;
         break;
       }
       case 'bottom':
-        newCrop.height = Math.max(0.1, Math.min(initialCrop.height + deltaY, 1 - initialCrop.y));
+        cropUpdate.height = Math.max(0.1, Math.min(initialCrop.height + deltaY, 1 - initialCrop.y));
         break;
       case 'left': {
         const newX = Math.max(0, initialCrop.x + deltaX);
         const right = initialCrop.x + initialCrop.width;
-        newCrop.x = Math.min(newX, right - 0.1);
-        newCrop.width = right - newCrop.x;
+        cropUpdate.x = Math.min(newX, right - 0.1);
+        cropUpdate.width = right - cropUpdate.x;
         break;
       }
       case 'right':
-        newCrop.width = Math.max(0.1, Math.min(initialCrop.width + deltaX, 1 - initialCrop.x));
+        cropUpdate.width = Math.max(0.1, Math.min(initialCrop.width + deltaX, 1 - initialCrop.x));
         break;
     }
 
-    onCropChange(newCrop);
+    onCropChange(cropUpdate);
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
@@ -107,6 +107,7 @@ export function CropControl({ videoElement, cropRegion, onCropChange }: CropCont
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
       } catch {
+        // Ignore pointer capture release errors
       }
     }
     setIsDragging(null);

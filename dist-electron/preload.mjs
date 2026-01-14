@@ -59,5 +59,17 @@ electron.contextBridge.exposeInMainWorld("electronAPI", {
   },
   getPlatform: () => {
     return electron.ipcRenderer.invoke("get-platform");
+  },
+  storeCameraRecording: (videoData, fileName) => {
+    return electron.ipcRenderer.invoke("store-camera-recording", videoData, fileName);
+  },
+  getCameraVideoPath: (mainVideoPath) => {
+    return electron.ipcRenderer.invoke("get-camera-video-path", mainVideoPath);
+  },
+  showCameraOverlay: (deviceId) => {
+    return electron.ipcRenderer.invoke("show-camera-overlay", deviceId);
+  },
+  hideCameraOverlay: () => {
+    return electron.ipcRenderer.invoke("hide-camera-overlay");
   }
 });

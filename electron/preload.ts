@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+interface ProcessedDesktopSource {
+  id: string;
+  name: string;
+  display_id: string;
+  thumbnail: string | null;
+  appIcon: string | null;
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
     hudOverlayHide: () => {
       ipcRenderer.send('hud-overlay-hide');
@@ -20,7 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openSourceSelector: () => {
     return ipcRenderer.invoke('open-source-selector')
   },
-  selectSource: (source: any) => {
+  selectSource: (source: ProcessedDesktopSource) => {
     return ipcRenderer.invoke('select-source', source)
   },
   getSelectedSource: () => {
@@ -62,5 +70,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getPlatform: () => {
     return ipcRenderer.invoke('get-platform')
+  },
+  storeCameraRecording: (videoData: ArrayBuffer, fileName: string) => {
+    return ipcRenderer.invoke('store-camera-recording', videoData, fileName)
+  },
+  getCameraVideoPath: (mainVideoPath: string) => {
+    return ipcRenderer.invoke('get-camera-video-path', mainVideoPath)
+  },
+  showCameraOverlay: (deviceId: string) => {
+    return ipcRenderer.invoke('show-camera-overlay', deviceId)
+  },
+  hideCameraOverlay: () => {
+    return ipcRenderer.invoke('hide-camera-overlay')
   },
 })

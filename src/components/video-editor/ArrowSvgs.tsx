@@ -180,6 +180,7 @@ export function ArrowDownLeft({ color, strokeWidth, className }: ArrowSvgProps) 
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function getArrowComponent(direction: ArrowDirection) {
   switch (direction) {
     case 'up': return ArrowUp;

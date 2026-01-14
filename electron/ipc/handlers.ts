@@ -4,14 +4,24 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { RECORDINGS_DIR } from '../main'
 
-let selectedSource: any = null
+interface DesktopSource {
+  id: string;
+  name: string;
+  display_id: string;
+  thumbnail: string | null;
+  appIcon: string | null;
+}
+
+let selectedSource: DesktopSource | null = null
 
 export function registerIpcHandlers(
   createEditorWindow: () => void,
   createSourceSelectorWindow: () => BrowserWindow,
   getMainWindow: () => BrowserWindow | null,
   getSourceSelectorWindow: () => BrowserWindow | null,
-  onRecordingStateChange?: (recording: boolean, sourceName: string) => void
+  onRecordingStateChange?: (recording: boolean, sourceName: string) => void,
+  showCameraOverlay?: (deviceId: string) => void,
+  hideCameraOverlay?: () => void
 ) {
   ipcMain.handle('get-sources', async (_, opts) => {
     const sources = await desktopCapturer.getSources(opts)
@@ -104,6 +114,19 @@ export function registerIpcHandlers(
     }
   })
 
+  // Camera overlay window handlers
+  ipcMain.handle('show-camera-overlay', (_, deviceId: string) => {
+    if (showCameraOverlay) {
+      showCameraOverlay(deviceId)
+    }
+  })
+
+  ipcMain.handle('hide-camera-overlay', () => {
+    if (hideCameraOverlay) {
+      hideCameraOverlay()
+    }
+  })
+
 
   ipcMain.handle('open-external-url', async (_, url: string) => {
     try {
@@ -138,12 +161,17 @@ export function registerIpcHandlers(
         ? [{ name: 'GIF Image', extensions: ['gif'] }]
         : [{ name: 'MP4 Video', extensions: ['mp4'] }];
 
-      const result = await dialog.showSaveDialog(mainWindow || undefined, {
+      const dialogOptions: Electron.SaveDialogOptions = {
         title: isGif ? 'Save Exported GIF' : 'Save Exported Video',
         defaultPath: path.join(app.getPath('downloads'), fileName),
         filters,
         properties: ['createDirectory', 'showOverwriteConfirmation']
-      });
+      };
+
+      // Show dialog with parent window if available
+      const result = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions);
 
       if (result.canceled || !result.filePath) {
         return {
@@ -218,5 +246,52 @@ export function registerIpcHandlers(
 
   ipcMain.handle('get-platform', () => {
     return process.platform;
+  });
+
+  // Store camera recording as separate file during screen recording
+  ipcMain.handle('store-camera-recording', async (_, videoData: ArrayBuffer, fileName: string) => {
+    try {
+      const videoPath = path.join(RECORDINGS_DIR, fileName);
+      await fs.writeFile(videoPath, Buffer.from(videoData));
+      return { success: true, path: videoPath };
+    } catch (error) {
+      console.error('Failed to store camera recording:', error);
+      return { success: false, error: String(error) };
+    }
+  });
+
+  // Get camera video path from main recording path
+  ipcMain.handle('get-camera-video-path', async (_, mainVideoPath: string) => {
+    try {
+      // Extract timestamp from main video filename (recording-{timestamp}.webm)
+      const filename = path.basename(mainVideoPath);
+      const match = filename.match(/recording-(\d+)\.webm$/);
+
+      if (!match) {
+        return { success: false, path: null };
+      }
+
+      const timestamp = match[1];
+      const cameraFileName = `camera-${timestamp}.webm`;
+      const cameraPath = path.join(RECORDINGS_DIR, cameraFileName);
+
+      // Security: Verify resolved path is within RECORDINGS_DIR (defense in depth)
+      const resolvedPath = path.resolve(cameraPath);
+      const resolvedRecordingsDir = path.resolve(RECORDINGS_DIR);
+      if (!resolvedPath.startsWith(resolvedRecordingsDir + path.sep)) {
+        return { success: false, path: null };
+      }
+
+      // Check if camera file exists
+      try {
+        await fs.access(cameraPath);
+        return { success: true, path: cameraPath };
+      } catch {
+        // Camera file doesn't exist (recording without camera)
+        return { success: false, path: null };
+      }
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
   });
 }

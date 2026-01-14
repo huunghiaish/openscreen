@@ -27,6 +27,8 @@ import {
   type AnnotationRegion,
   type CropRegion,
   type FigureData,
+  type CameraPipConfig,
+  DEFAULT_CAMERA_PIP_CONFIG,
 } from "./types";
 import { VideoExporter, GifExporter, type ExportProgress, type ExportQuality, type ExportSettings, type ExportFormat, type GifFrameRate, type GifSizePreset, GIF_SIZE_PRESETS, calculateOutputDimensions } from "@/lib/exporter";
 import { type AspectRatio, getAspectRatioValue } from "@/utils/aspectRatioUtils";
@@ -43,11 +45,11 @@ export default function VideoEditor() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [wallpaper, setWallpaper] = useState<string>(WALLPAPER_PATHS[0]);
-  const [shadowIntensity, setShadowIntensity] = useState(0);
+  const [shadowIntensity, setShadowIntensity] = useState(0.25);
   const [showBlur, setShowBlur] = useState(false);
   const [motionBlurEnabled, setMotionBlurEnabled] = useState(true);
-  const [borderRadius, setBorderRadius] = useState(0);
-  const [padding, setPadding] = useState(50);
+  const [borderRadius, setBorderRadius] = useState(5);
+  const [padding, setPadding] = useState(20);
   const [cropRegion, setCropRegion] = useState<CropRegion>(DEFAULT_CROP_REGION);
   const [zoomRegions, setZoomRegions] = useState<ZoomRegion[]>([]);
   const [selectedZoomId, setSelectedZoomId] = useState<string | null>(null);
@@ -65,6 +67,19 @@ export default function VideoEditor() {
   const [gifFrameRate, setGifFrameRate] = useState<GifFrameRate>(15);
   const [gifLoop, setGifLoop] = useState(true);
   const [gifSizePreset, setGifSizePreset] = useState<GifSizePreset>('medium');
+
+  // Camera PiP state
+  const [cameraVideoPath, setCameraVideoPath] = useState<string | null>(null);
+  const [cameraPipConfig, setCameraPipConfig] = useState<CameraPipConfig>(
+    DEFAULT_CAMERA_PIP_CONFIG
+  );
+  // Ref to avoid stale closure in export callback
+  const cameraVideoPathRef = useRef<string | null>(null);
+
+  // Camera PiP config change handler
+  const handleCameraPipConfigChange = useCallback((updates: Partial<CameraPipConfig>) => {
+    setCameraPipConfig((prev) => ({ ...prev, ...updates }));
+  }, []);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -93,7 +108,7 @@ export default function VideoEditor() {
     async function loadVideo() {
       try {
         const result = await window.electronAPI.getCurrentVideoPath();
-        
+
         if (result.success && result.path) {
           const videoUrl = toFileUrl(result.path);
           setVideoPath(videoUrl);
@@ -108,6 +123,28 @@ export default function VideoEditor() {
     }
     loadVideo();
   }, []);
+
+  // Load camera video path when main video loads
+  useEffect(() => {
+    async function loadCameraVideo() {
+      if (!videoPath) return;
+
+      // Convert file URL back to path
+      const mainPath = videoPath.replace(/^file:\/\/\//, '').replace(/^file:\/\//, '');
+
+      const result = await window.electronAPI.getCameraVideoPath(mainPath);
+      if (result.success && result.path) {
+        const cameraUrl = toFileUrl(result.path);
+        setCameraVideoPath(cameraUrl);
+        cameraVideoPathRef.current = cameraUrl; // Update ref for export callback
+      } else {
+        setCameraVideoPath(null);
+        cameraVideoPathRef.current = null;
+      }
+    }
+
+    loadCameraVideo();
+  }, [videoPath]);
 
   // Initialize default wallpaper with resolved asset path
   useEffect(() => {
@@ -320,7 +357,7 @@ export default function VideoEditor() {
       });
       return updated;
     });
-  }, []);;
+  }, []);
 
   const handleAnnotationTypeChange = useCallback((id: string, type: AnnotationRegion['type']) => {
     setAnnotationRegions((prev) => {
@@ -438,42 +475,6 @@ export default function VideoEditor() {
     }
   }, [selectedAnnotationId, annotationRegions]);
 
-  const handleOpenExportDialog = useCallback(() => {
-    if (!videoPath) {
-      toast.error('No video loaded');
-      return;
-    }
-
-    const video = videoPlaybackRef.current?.video;
-    if (!video) {
-      toast.error('Video not ready');
-      return;
-    }
-
-    // Build export settings from current state
-    const sourceWidth = video.videoWidth || 1920;
-    const sourceHeight = video.videoHeight || 1080;
-    const gifDimensions = calculateOutputDimensions(sourceWidth, sourceHeight, gifSizePreset, GIF_SIZE_PRESETS);
-
-    const settings: ExportSettings = {
-      format: exportFormat,
-      quality: exportFormat === 'mp4' ? exportQuality : undefined,
-      gifConfig: exportFormat === 'gif' ? {
-        frameRate: gifFrameRate,
-        loop: gifLoop,
-        sizePreset: gifSizePreset,
-        width: gifDimensions.width,
-        height: gifDimensions.height,
-      } : undefined,
-    };
-
-    setShowExportDialog(true);
-    setExportError(null);
-    
-    // Start export immediately
-    handleExport(settings);
-  }, [videoPath, exportFormat, exportQuality, gifFrameRate, gifLoop, gifSizePreset]);
-
   const handleExport = useCallback(async (settings: ExportSettings) => {
     if (!videoPath) {
       toast.error('No video loaded');
@@ -539,6 +540,9 @@ export default function VideoEditor() {
           onProgress: (progress: ExportProgress) => {
             setExportProgress(progress);
           },
+          // Camera PiP config
+          cameraVideoUrl: cameraVideoPathRef.current || undefined,
+          cameraPipConfig,
         });
 
         exporterRef.current = gifExporter as unknown as VideoExporter;
@@ -664,6 +668,9 @@ export default function VideoEditor() {
           onProgress: (progress: ExportProgress) => {
             setExportProgress(progress);
           },
+          // Camera PiP config
+          cameraVideoUrl: cameraVideoPathRef.current || undefined,
+          cameraPipConfig,
         });
 
         exporterRef.current = exporter;
@@ -706,7 +713,43 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, cameraPipConfig]);
+
+  const handleOpenExportDialog = useCallback(() => {
+    if (!videoPath) {
+      toast.error('No video loaded');
+      return;
+    }
+
+    const video = videoPlaybackRef.current?.video;
+    if (!video) {
+      toast.error('Video not ready');
+      return;
+    }
+
+    // Build export settings from current state
+    const sourceWidth = video.videoWidth || 1920;
+    const sourceHeight = video.videoHeight || 1080;
+    const gifDimensions = calculateOutputDimensions(sourceWidth, sourceHeight, gifSizePreset, GIF_SIZE_PRESETS);
+
+    const settings: ExportSettings = {
+      format: exportFormat,
+      quality: exportFormat === 'mp4' ? exportQuality : undefined,
+      gifConfig: exportFormat === 'gif' ? {
+        frameRate: gifFrameRate,
+        loop: gifLoop,
+        sizePreset: gifSizePreset,
+        width: gifDimensions.width,
+        height: gifDimensions.height,
+      } : undefined,
+    };
+
+    setShowExportDialog(true);
+    setExportError(null);
+
+    // Start export immediately
+    handleExport(settings);
+  }, [videoPath, exportFormat, exportQuality, gifFrameRate, gifLoop, gifSizePreset, handleExport]);
 
   const handleCancelExport = useCallback(() => {
     if (exporterRef.current) {
@@ -782,6 +825,8 @@ export default function VideoEditor() {
                       onSelectAnnotation={handleSelectAnnotation}
                       onAnnotationPositionChange={handleAnnotationPositionChange}
                       onAnnotationSizeChange={handleAnnotationSizeChange}
+                      cameraVideoPath={cameraVideoPath}
+                      cameraPipConfig={cameraPipConfig}
                     />
                   </div>
                 </div>
@@ -885,6 +930,9 @@ export default function VideoEditor() {
           onAnnotationStyleChange={handleAnnotationStyleChange}
           onAnnotationFigureDataChange={handleAnnotationFigureDataChange}
           onAnnotationDelete={handleAnnotationDelete}
+          cameraVideoPath={cameraVideoPath}
+          cameraPipConfig={cameraPipConfig}
+          onCameraPipConfigChange={handleCameraPipConfigChange}
         />
       </div>
 

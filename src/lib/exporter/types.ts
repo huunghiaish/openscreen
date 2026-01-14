@@ -1,3 +1,10 @@
+import type { CameraPipConfig } from '@/components/video-editor/types';
+
+export interface CameraExportConfig {
+  videoUrl: string;
+  pipConfig: CameraPipConfig;
+}
+
 export interface ExportConfig {
   width: number;
   height: number;

@@ -1,11 +1,13 @@
 import { Application, Container, Sprite, Graphics, BlurFilter, Texture } from 'pixi.js';
-import type { ZoomRegion, CropRegion, AnnotationRegion } from '@/components/video-editor/types';
+import type { ZoomRegion, CropRegion, AnnotationRegion, ZoomDepth } from '@/components/video-editor/types';
 import { ZOOM_DEPTH_SCALES } from '@/components/video-editor/types';
 import { findDominantRegion } from '@/components/video-editor/videoPlayback/zoomRegionUtils';
 import { applyZoomTransform } from '@/components/video-editor/videoPlayback/zoomTransform';
 import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA } from '@/components/video-editor/videoPlayback/constants';
 import { clampFocusToStage as clampFocusToStageUtil } from '@/components/video-editor/videoPlayback/focusUtils';
 import { renderAnnotations } from './annotationRenderer';
+import { CameraPipRenderer } from './camera-pip-renderer';
+import type { CameraExportConfig } from './types';
 
 interface FrameRenderConfig {
   width: number;
@@ -24,12 +26,21 @@ interface FrameRenderConfig {
   annotationRegions?: AnnotationRegion[];
   previewWidth?: number;
   previewHeight?: number;
+  cameraExport?: CameraExportConfig;
 }
 
 interface AnimationState {
   scale: number;
   focusX: number;
   focusY: number;
+}
+
+interface LayoutInfo {
+  stageSize: { width: number; height: number };
+  videoSize: { width: number; height: number };
+  baseScale: number;
+  baseOffset: { x: number; y: number };
+  maskRect: { x: number; y: number; width: number; height: number };
 }
 
 // Renders video frames with all effects (background, zoom, crop, blur, shadow) to an offscreen canvas for export.
@@ -48,8 +59,10 @@ export class FrameRenderer {
   private compositeCtx: CanvasRenderingContext2D | null = null;
   private config: FrameRenderConfig;
   private animationState: AnimationState;
-  private layoutCache: any = null;
+  private layoutCache: LayoutInfo | null = null;
   private currentVideoTime = 0;
+  // Camera PiP renderer (extracted to separate module)
+  private cameraPipRenderer: CameraPipRenderer | null = null;
 
   constructor(config: FrameRenderConfig) {
     this.config = config;
@@ -69,8 +82,7 @@ export class FrameRenderer {
     // Try to set colorSpace if supported (may not be available on all platforms)
     try {
       if (canvas && 'colorSpace' in canvas) {
-        // @ts-ignore
-        canvas.colorSpace = 'srgb';
+        (canvas as HTMLCanvasElement & { colorSpace?: string }).colorSpace = 'srgb';
       }
     } catch (error) {
       // Silently ignore colorSpace errors on platforms that don't support it
@@ -131,6 +143,20 @@ export class FrameRenderer {
     this.maskGraphics = new Graphics();
     this.videoContainer.addChild(this.maskGraphics);
     this.videoContainer.mask = this.maskGraphics;
+
+    // Initialize camera PiP renderer if config provided
+    if (this.config.cameraExport?.videoUrl) {
+      console.log('[FrameRenderer] Initializing camera PiP with config:', {
+        videoUrl: this.config.cameraExport.videoUrl,
+        pipConfig: this.config.cameraExport.pipConfig,
+      });
+      this.cameraPipRenderer = new CameraPipRenderer(this.config.cameraExport);
+      const success = await this.cameraPipRenderer.initialize();
+      if (!success) {
+        console.warn('[FrameRenderer] Camera PiP initialization failed');
+        this.cameraPipRenderer = null;
+      }
+    }
   }
 
   private async setupBackground(): Promise<void> {
@@ -246,8 +272,8 @@ export class FrameRenderer {
       bgCtx.fillRect(0, 0, this.config.width, this.config.height);
     }
 
-    // Store the background canvas for compositing
-    this.backgroundSprite = bgCanvas as any;
+    // Store the background canvas for compositing (using unknown cast as Sprite type mismatch)
+    this.backgroundSprite = bgCanvas as unknown as Sprite;
   }
 
   async renderFrame(videoFrame: VideoFrame, timestamp: number): Promise<void> {
@@ -258,14 +284,15 @@ export class FrameRenderer {
     this.currentVideoTime = timestamp / 1000000;
 
     // Create or update video sprite from VideoFrame
+    // VideoFrame is compatible with PixiJS Texture.from but not typed
     if (!this.videoSprite) {
-      const texture = Texture.from(videoFrame as any);
+      const texture = Texture.from(videoFrame as unknown as HTMLVideoElement);
       this.videoSprite = new Sprite(texture);
       this.videoContainer.addChild(this.videoSprite);
     } else {
       // Destroy old texture to avoid memory leaks, then create new one
       const oldTexture = this.videoSprite.texture;
-      const newTexture = Texture.from(videoFrame as any);
+      const newTexture = Texture.from(videoFrame as unknown as HTMLVideoElement);
       this.videoSprite.texture = newTexture;
       oldTexture.destroy(true);
     }
@@ -286,8 +313,8 @@ export class FrameRenderer {
     applyZoomTransform({
       cameraContainer: this.cameraContainer,
       blurFilter: this.blurFilter,
-      stageSize: this.layoutCache.stageSize,
-      baseMask: this.layoutCache.maskRect,
+      stageSize: this.layoutCache!.stageSize,
+      baseMask: this.layoutCache!.maskRect,
       zoomScale: this.animationState.scale,
       focusX: this.animationState.focusX,
       focusY: this.animationState.focusY,
@@ -318,6 +345,16 @@ export class FrameRenderer {
         this.config.height,
         timeMs,
         scaleFactor
+      );
+    }
+
+    // Render camera PiP on top of everything (using extracted renderer)
+    if (this.cameraPipRenderer && this.compositeCtx) {
+      await this.cameraPipRenderer.render(
+        this.compositeCtx,
+        this.config.width,
+        this.config.height,
+        timeMs
       );
     }
   }
@@ -385,7 +422,7 @@ export class FrameRenderer {
 
   private clampFocusToStage(focus: { cx: number; cy: number }, depth: number): { cx: number; cy: number } {
     if (!this.layoutCache) return focus;
-    return clampFocusToStageUtil(focus, depth as any, this.layoutCache);
+    return clampFocusToStageUtil(focus, depth as ZoomDepth, this.layoutCache.stageSize);
   }
 
   private updateAnimationState(timeMs: number): number {
@@ -464,7 +501,7 @@ export class FrameRenderer {
 
     // Step 1: Draw background layer (with optional blur, not affected by zoom)
     if (this.backgroundSprite) {
-      const bgCanvas = this.backgroundSprite as any as HTMLCanvasElement;
+      const bgCanvas = this.backgroundSprite as unknown as HTMLCanvasElement;
       
       if (this.config.showBlur) {
         ctx.save();
@@ -510,7 +547,6 @@ export class FrameRenderer {
     return this.compositeCanvas;
   }
 
-
   destroy(): void {
     if (this.videoSprite) {
       this.videoSprite.destroy();
@@ -529,5 +565,10 @@ export class FrameRenderer {
     this.shadowCtx = null;
     this.compositeCanvas = null;
     this.compositeCtx = null;
+    // Clean up camera PiP renderer
+    if (this.cameraPipRenderer) {
+      this.cameraPipRenderer.destroy();
+      this.cameraPipRenderer = null;
+    }
   }
 }

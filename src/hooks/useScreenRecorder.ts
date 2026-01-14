@@ -1,16 +1,27 @@
 import { useState, useRef, useEffect } from "react";
 import { fixWebmDuration } from "@fix-webm-duration/fix";
 
+interface UseScreenRecorderOptions {
+  cameraDeviceId?: string | null;
+}
+
 type UseScreenRecorderReturn = {
   recording: boolean;
   toggleRecording: () => void;
+  cameraStream: MediaStream | null;
 };
 
-export function useScreenRecorder(): UseScreenRecorderReturn {
+export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseScreenRecorderReturn {
+  const { cameraDeviceId } = options;
+
   const [recording, setRecording] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
+  const cameraRecorder = useRef<MediaRecorder | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null); // Ref to avoid stale closure
   const stream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
+  const cameraChunks = useRef<Blob[]>([]);
   const startTime = useRef<number>(0);
 
   // Target visually lossless 4K @ 60fps; fall back gracefully when hardware cannot keep up
@@ -45,11 +56,28 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
     return Math.round(18_000_000 * highFrameRateBoost);
   };
 
+  const stopCameraRecording = useRef(async (): Promise<Blob | null> => {
+    return new Promise((resolve) => {
+      if (!cameraRecorder.current || cameraRecorder.current.state !== 'recording') {
+        resolve(null);
+        return;
+      }
+      cameraRecorder.current.onstop = () => {
+        const blob = new Blob(cameraChunks.current, { type: 'video/webm' });
+        cameraChunks.current = [];
+        resolve(blob);
+      };
+      cameraRecorder.current.stop();
+    });
+  });
+
   const stopRecording = useRef(() => {
     if (mediaRecorder.current?.state === "recording") {
       if (stream.current) {
         stream.current.getTracks().forEach(track => track.stop());
       }
+      // NOTE: Don't stop cameraRecorder here! Let stopCameraRecording handle it
+      // in the main recorder's onstop handler to ensure blob is captured properly
       mediaRecorder.current.stop();
       setRecording(false);
 
@@ -59,7 +87,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
-    
+
     if (window.electronAPI?.onStopRecordingFromTray) {
       cleanup = window.electronAPI.onStopRecordingFromTray(() => {
         stopRecording.current();
@@ -68,16 +96,49 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
     return () => {
       if (cleanup) cleanup();
-      
+
       if (mediaRecorder.current?.state === "recording") {
         mediaRecorder.current.stop();
+      }
+      if (cameraRecorder.current?.state === "recording") {
+        cameraRecorder.current.stop();
       }
       if (stream.current) {
         stream.current.getTracks().forEach(track => track.stop());
         stream.current = null;
       }
+      // Clean up camera stream ref
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(track => track.stop());
+        cameraStreamRef.current = null;
+      }
     };
   }, []);
+
+  // Start camera capture if deviceId provided
+  const startCameraCapture = async (deviceId: string): Promise<MediaStream | null> => {
+    // Validate deviceId
+    if (!deviceId || typeof deviceId !== 'string' || deviceId.trim() === '') {
+      console.warn('Invalid camera deviceId provided');
+      return null;
+    }
+
+    try {
+      const camStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: { exact: deviceId },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 },
+        },
+        audio: false,
+      });
+      return camStream;
+    } catch (err) {
+      console.warn('Camera capture failed, continuing without camera:', err);
+      return null;
+    }
+  };
 
   const startRecording = async () => {
     try {
@@ -87,6 +148,30 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
         return;
       }
 
+      // Start camera capture if deviceId provided
+      if (cameraDeviceId) {
+        const camStream = await startCameraCapture(cameraDeviceId);
+        if (camStream) {
+          cameraStreamRef.current = camStream; // Store in ref for reliable cleanup
+          setCameraStream(camStream);
+          // Start camera recording
+          cameraChunks.current = [];
+          const cameraMimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+            ? 'video/webm;codecs=vp9'
+            : 'video/webm';
+          const camRecorder = new MediaRecorder(camStream, {
+            mimeType: cameraMimeType,
+            videoBitsPerSecond: 2_500_000,
+          });
+          camRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) cameraChunks.current.push(e.data);
+          };
+          cameraRecorder.current = camRecorder;
+          camRecorder.start(1000);
+        }
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Electron requires non-standard constraints
       const mediaStream = await (navigator.mediaDevices as any).getUserMedia({
         audio: false,
         video: {
@@ -115,12 +200,13 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
         console.warn("Unable to lock 4K/60fps constraints, using best available track settings.", error);
       }
 
-      let { width = 1920, height = 1080, frameRate = TARGET_FRAME_RATE } = videoTrack.getSettings();
-      
+      const settings = videoTrack.getSettings();
+      const frameRate = settings.frameRate ?? TARGET_FRAME_RATE;
+
       // Ensure dimensions are divisible by 2 for VP9/AV1 codec compatibility
-      width = Math.floor(width / 2) * 2;
-      height = Math.floor(height / 2) * 2;
-      
+      const width = Math.floor((settings.width ?? 1920) / 2) * 2;
+      const height = Math.floor((settings.height ?? 1080) / 2) * 2;
+
       const videoBitsPerSecond = computeBitrate(width, height);
       const mimeType = selectMimeType();
 
@@ -129,7 +215,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
           videoBitsPerSecond / 1_000_000
         )} Mbps`
       );
-      
+
       chunks.current = [];
       const recorder = new MediaRecorder(stream.current, {
         mimeType,
@@ -145,7 +231,6 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
         const duration = Date.now() - startTime.current;
         const recordedChunks = chunks.current;
         const buggyBlob = new Blob(recordedChunks, { type: mimeType });
-        // Clear chunks early to free memory immediately after blob creation
         chunks.current = [];
         const timestamp = Date.now();
         const videoFileName = `recording-${timestamp}.webm`;
@@ -157,6 +242,24 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
           if (!videoResult.success) {
             console.error('Failed to store video:', videoResult.message);
             return;
+          }
+
+          // Store camera recording if exists (use ref to avoid stale closure)
+          const cameraBlob = await stopCameraRecording.current();
+          if (cameraBlob && cameraBlob.size > 0) {
+            const cameraFileName = `camera-${timestamp}.webm`;
+            const cameraBuffer = await cameraBlob.arrayBuffer();
+            const cameraResult = await window.electronAPI.storeCameraRecording(cameraBuffer, cameraFileName);
+            if (!cameraResult.success) {
+              console.warn('Failed to store camera recording:', cameraResult.error);
+            }
+          }
+
+          // Clean up camera stream using ref (avoids stale closure)
+          if (cameraStreamRef.current) {
+            cameraStreamRef.current.getTracks().forEach(track => track.stop());
+            cameraStreamRef.current = null;
+            setCameraStream(null);
           }
 
           if (videoResult.path) {
@@ -187,5 +290,5 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
     recording ? stopRecording.current() : startRecording();
   };
 
-  return { recording, toggleRecording };
+  return { recording, toggleRecording, cameraStream };
 }
