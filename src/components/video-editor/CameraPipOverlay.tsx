@@ -7,22 +7,19 @@ const CAMERA_PIP_MARGIN = 16;
 
 /**
  * Get CSS styles for camera PiP based on shape.
- * - rounded-rectangle: Original aspect, configurable borderRadius
- * - rectangle: Original aspect, no rounding
- * - square: 1:1 aspect, no rounding
- * - circle: 1:1 aspect, 50% rounding
+ * - rectangle: Original aspect, configurable borderRadius
+ * - square: 1:1 aspect, configurable borderRadius
+ * - circle: 1:1 aspect, 50% rounding (always full circle)
  */
 function getShapeStyles(shape: CameraPipShape, borderRadius: number): {
   borderRadius: string;
   forceSquare: boolean;
 } {
   switch (shape) {
-    case 'rounded-rectangle':
-      return { borderRadius: `${borderRadius}%`, forceSquare: false };
     case 'rectangle':
-      return { borderRadius: '0', forceSquare: false };
+      return { borderRadius: `${borderRadius}%`, forceSquare: false };
     case 'square':
-      return { borderRadius: '0', forceSquare: true };
+      return { borderRadius: `${borderRadius}%`, forceSquare: true };
     case 'circle':
       return { borderRadius: '50%', forceSquare: true };
     default:
@@ -100,7 +97,7 @@ export const CameraPipOverlay = forwardRef<CameraPipOverlayRef, CameraPipOverlay
 
     // Get shape-dependent styles
     const shapeStyles = useMemo(
-      () => getShapeStyles(config.shape || 'rounded-rectangle', config.borderRadius),
+      () => getShapeStyles(config.shape || 'rectangle', config.borderRadius),
       [config.shape, config.borderRadius]
     );
 

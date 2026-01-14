@@ -3,9 +3,8 @@ import type { CameraExportConfig } from './types';
 
 /**
  * Get rendering params based on shape.
- * - rounded-rectangle: Original aspect, configurable borderRadius
- * - rectangle: Original aspect, no rounding
- * - square: 1:1 aspect, no rounding
+ * - rectangle: Original aspect, configurable borderRadius
+ * - square: 1:1 aspect, configurable borderRadius
  * - circle: 1:1 aspect, 50% rounding (full circle)
  */
 function getShapeParams(shape: CameraPipShape | undefined, borderRadius: number): {
@@ -13,16 +12,14 @@ function getShapeParams(shape: CameraPipShape | undefined, borderRadius: number)
   forceSquare: boolean; // true for square/circle shapes
 } {
   switch (shape) {
-    case 'rounded-rectangle':
-      return { radius: borderRadius, forceSquare: false };
     case 'rectangle':
-      return { radius: 0, forceSquare: false };
+      return { radius: borderRadius, forceSquare: false };
     case 'square':
-      return { radius: 0, forceSquare: true };
+      return { radius: borderRadius, forceSquare: true };
     case 'circle':
       return { radius: 50, forceSquare: true };
     default:
-      // Default to rounded-rectangle for backwards compatibility
+      // Default to rectangle for backwards compatibility
       return { radius: borderRadius, forceSquare: false };
   }
 }

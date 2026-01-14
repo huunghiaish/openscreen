@@ -23,7 +23,6 @@ const SIZES: { id: CameraPipSize; label: string }[] = [
 ];
 
 const SHAPES: { id: CameraPipShape; label: string; icon: typeof Square }[] = [
-  { id: 'rounded-rectangle', label: 'Rounded', icon: RectangleHorizontal },
   { id: 'rectangle', label: 'Rectangle', icon: RectangleHorizontal },
   { id: 'square', label: 'Square', icon: Square },
   { id: 'circle', label: 'Circle', icon: Circle },
@@ -103,7 +102,7 @@ export function CameraPipSettings({ config, onConfigChange }: CameraPipSettingsP
           {/* Shape Selector */}
           <div className="mb-3">
             <div className="text-xs font-medium text-slate-400 mb-2">Shape</div>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {SHAPES.map((shape) => {
                 const Icon = shape.icon;
                 return (
@@ -139,8 +138,8 @@ export function CameraPipSettings({ config, onConfigChange }: CameraPipSettingsP
             </div>
           </div>
 
-          {/* Border Radius Slider - only show for rounded-rectangle */}
-          {config.shape === 'rounded-rectangle' && (
+          {/* Border Radius Slider - show for rectangle/square, not circle */}
+          {config.shape !== 'circle' && (
             <div>
               <div className="text-xs font-medium text-slate-400 mb-2">
                 Corner Radius: {config.borderRadius}%

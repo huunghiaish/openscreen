@@ -122,22 +122,22 @@ export const DEFAULT_ZOOM_DEPTH: ZoomDepth = 3;
 // Camera PiP types
 export type CameraPipPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 export type CameraPipSize = 'small' | 'medium' | 'large';
-export type CameraPipShape = 'rounded-rectangle' | 'rectangle' | 'square' | 'circle';
+export type CameraPipShape = 'rectangle' | 'square' | 'circle';
 
 export interface CameraPipConfig {
   enabled: boolean;
   shape: CameraPipShape;
   position: CameraPipPosition;
   size: CameraPipSize;
-  borderRadius: number; // percentage, only used when shape = 'rounded-rectangle'
+  borderRadius: number; // percentage, used for rectangle/square (circle always 50%)
 }
 
 export const DEFAULT_CAMERA_PIP_CONFIG: CameraPipConfig = {
   enabled: true,
-  shape: 'rounded-rectangle',
+  shape: 'rectangle',
   position: 'bottom-right',
   size: 'medium',
-  borderRadius: 50,
+  borderRadius: 20,
 };
 
 // Size presets as percentage of container width
