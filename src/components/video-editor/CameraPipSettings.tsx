@@ -1,7 +1,8 @@
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
-import { Video } from 'lucide-react';
-import type { CameraPipConfig, CameraPipPosition, CameraPipSize } from './types';
+import { Slider } from '@/components/ui/slider';
+import { Video, Square, Circle, RectangleHorizontal } from 'lucide-react';
+import type { CameraPipConfig, CameraPipPosition, CameraPipSize, CameraPipShape } from './types';
 
 interface CameraPipSettingsProps {
   config: CameraPipConfig;
@@ -19,6 +20,13 @@ const SIZES: { id: CameraPipSize; label: string }[] = [
   { id: 'small', label: 'S' },
   { id: 'medium', label: 'M' },
   { id: 'large', label: 'L' },
+];
+
+const SHAPES: { id: CameraPipShape; label: string; icon: typeof Square }[] = [
+  { id: 'rounded-rectangle', label: 'Rounded', icon: RectangleHorizontal },
+  { id: 'rectangle', label: 'Rectangle', icon: RectangleHorizontal },
+  { id: 'square', label: 'Square', icon: Square },
+  { id: 'circle', label: 'Circle', icon: Circle },
 ];
 
 export function CameraPipSettings({ config, onConfigChange }: CameraPipSettingsProps) {
@@ -70,7 +78,7 @@ export function CameraPipSettings({ config, onConfigChange }: CameraPipSettingsP
           </div>
 
           {/* Size Selector */}
-          <div>
+          <div className="mb-3">
             <div className="text-xs font-medium text-slate-400 mb-2">Size</div>
             <div className="flex gap-2">
               {SIZES.map((size) => (
@@ -91,6 +99,62 @@ export function CameraPipSettings({ config, onConfigChange }: CameraPipSettingsP
               ))}
             </div>
           </div>
+
+          {/* Shape Selector */}
+          <div className="mb-3">
+            <div className="text-xs font-medium text-slate-400 mb-2">Shape</div>
+            <div className="grid grid-cols-4 gap-2">
+              {SHAPES.map((shape) => {
+                const Icon = shape.icon;
+                return (
+                  <button
+                    key={shape.id}
+                    onClick={() => onConfigChange({ shape: shape.id })}
+                    aria-label={`Shape ${shape.label}`}
+                    aria-pressed={config.shape === shape.id}
+                    className={cn(
+                      'py-2 px-1 rounded-lg border transition-all flex flex-col items-center gap-1',
+                      config.shape === shape.id
+                        ? 'border-[#34B27B] bg-[#34B27B]/20'
+                        : 'border-white/10 bg-white/5 hover:border-white/20'
+                    )}
+                  >
+                    <Icon
+                      className={cn(
+                        'w-4 h-4',
+                        config.shape === shape.id ? 'text-[#34B27B]' : 'text-slate-400'
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        'text-[10px] font-medium',
+                        config.shape === shape.id ? 'text-[#34B27B]' : 'text-slate-400'
+                      )}
+                    >
+                      {shape.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Border Radius Slider - only show for rounded-rectangle */}
+          {config.shape === 'rounded-rectangle' && (
+            <div>
+              <div className="text-xs font-medium text-slate-400 mb-2">
+                Corner Radius: {config.borderRadius}%
+              </div>
+              <Slider
+                value={[config.borderRadius]}
+                onValueChange={([value]) => onConfigChange({ borderRadius: value })}
+                min={0}
+                max={50}
+                step={1}
+                className="w-full"
+              />
+            </div>
+          )}
         </>
       )}
     </div>

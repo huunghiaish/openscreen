@@ -1,9 +1,34 @@
-import { forwardRef, useImperativeHandle, useRef, useEffect, useState } from 'react';
-import type { CameraPipConfig } from './types';
+import { forwardRef, useImperativeHandle, useRef, useEffect, useState, useMemo } from 'react';
+import type { CameraPipConfig, CameraPipShape } from './types';
 import { CAMERA_PIP_SIZE_PRESETS } from './types';
 
 // Margin from edge in pixels
 const CAMERA_PIP_MARGIN = 16;
+
+/**
+ * Get CSS styles for camera PiP based on shape.
+ * - rounded-rectangle: Original aspect, configurable borderRadius
+ * - rectangle: Original aspect, no rounding
+ * - square: 1:1 aspect, no rounding
+ * - circle: 1:1 aspect, 50% rounding
+ */
+function getShapeStyles(shape: CameraPipShape, borderRadius: number): {
+  borderRadius: string;
+  forceSquare: boolean;
+} {
+  switch (shape) {
+    case 'rounded-rectangle':
+      return { borderRadius: `${borderRadius}%`, forceSquare: false };
+    case 'rectangle':
+      return { borderRadius: '0', forceSquare: false };
+    case 'square':
+      return { borderRadius: '0', forceSquare: true };
+    case 'circle':
+      return { borderRadius: '50%', forceSquare: true };
+    default:
+      return { borderRadius: `${borderRadius}%`, forceSquare: false };
+  }
+}
 
 interface CameraPipOverlayProps {
   videoPath: string;
@@ -73,6 +98,12 @@ export const CameraPipOverlay = forwardRef<CameraPipOverlayRef, CameraPipOverlay
       setHasError(false);
     }, [videoPath]);
 
+    // Get shape-dependent styles
+    const shapeStyles = useMemo(
+      () => getShapeStyles(config.shape || 'rounded-rectangle', config.borderRadius),
+      [config.shape, config.borderRadius]
+    );
+
     if (!config.enabled || hasError) return null;
 
     // Calculate size and position
@@ -93,7 +124,7 @@ export const CameraPipOverlay = forwardRef<CameraPipOverlayRef, CameraPipOverlay
           ...positionStyles[config.position],
           width: size,
           height: size,
-          borderRadius: `${config.borderRadius}%`,
+          borderRadius: shapeStyles.borderRadius,
           border: '3px solid rgba(255,255,255,0.2)',
           zIndex: 100,
         }}

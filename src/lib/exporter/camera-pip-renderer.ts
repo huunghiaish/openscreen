@@ -1,5 +1,31 @@
-import { CAMERA_PIP_SIZE_PRESETS } from '@/components/video-editor/types';
+import { CAMERA_PIP_SIZE_PRESETS, type CameraPipShape } from '@/components/video-editor/types';
 import type { CameraExportConfig } from './types';
+
+/**
+ * Get rendering params based on shape.
+ * - rounded-rectangle: Original aspect, configurable borderRadius
+ * - rectangle: Original aspect, no rounding
+ * - square: 1:1 aspect, no rounding
+ * - circle: 1:1 aspect, 50% rounding (full circle)
+ */
+function getShapeParams(shape: CameraPipShape | undefined, borderRadius: number): {
+  radius: number; // 0-50 percentage for roundRect
+  forceSquare: boolean; // true for square/circle shapes
+} {
+  switch (shape) {
+    case 'rounded-rectangle':
+      return { radius: borderRadius, forceSquare: false };
+    case 'rectangle':
+      return { radius: 0, forceSquare: false };
+    case 'square':
+      return { radius: 0, forceSquare: true };
+    case 'circle':
+      return { radius: 50, forceSquare: true };
+    default:
+      // Default to rounded-rectangle for backwards compatibility
+      return { radius: borderRadius, forceSquare: false };
+  }
+}
 
 /**
  * Handles camera PiP (Picture-in-Picture) video loading, frame extraction,
@@ -91,7 +117,8 @@ export class CameraPipRenderer {
     }
     if (!this.cameraVideo || !this.cameraCanvas || !this.cameraCtx) return;
 
-    const { position, size, borderRadius } = this.config.pipConfig;
+    const { position, size, borderRadius, shape } = this.config.pipConfig;
+    const shapeParams = getShapeParams(shape, borderRadius);
 
     // Seek camera to correct time
     const timeSeconds = timeMs / 1000;
@@ -144,19 +171,30 @@ export class CameraPipRenderer {
         break;
     }
 
-    // Draw camera PiP with border radius
+    // Draw camera PiP with shape-based styling
     ctx.save();
 
-    // Create circular/rounded clip path
+    // Create clip path based on shape radius
     ctx.beginPath();
-    const radius = (pipSize * borderRadius) / 100;
+    const radius = (pipSize * shapeParams.radius) / 100;
     ctx.roundRect(x, y, pipSize, pipSize, radius);
     ctx.clip();
+
+    // Calculate source rectangle for center-crop when forceSquare is true
+    let srcX = 0, srcY = 0, srcW = this.cameraCanvas.width, srcH = this.cameraCanvas.height;
+    if (shapeParams.forceSquare) {
+      // Center-crop to 1:1 aspect ratio
+      const minDim = Math.min(srcW, srcH);
+      srcX = (srcW - minDim) / 2;
+      srcY = (srcH - minDim) / 2;
+      srcW = minDim;
+      srcH = minDim;
+    }
 
     // Draw camera (mirrored horizontally for natural look)
     ctx.translate(x + pipSize, y);
     ctx.scale(-1, 1);
-    ctx.drawImage(this.cameraCanvas, 0, 0, pipSize, pipSize);
+    ctx.drawImage(this.cameraCanvas, srcX, srcY, srcW, srcH, 0, 0, pipSize, pipSize);
 
     ctx.restore();
 
