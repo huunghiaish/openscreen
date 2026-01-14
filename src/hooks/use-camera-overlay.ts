@@ -48,6 +48,19 @@ export function useCameraOverlay({
   const prevRecordingRef = useRef(recording);
   const prevPreviewRef = useRef(previewEnabled);
   const prevCameraEnabledRef = useRef(cameraEnabled);
+  const initializedRef = useRef(false);
+
+  // Handle initial mount - show overlay if camera already enabled
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
+    // On mount, if camera is enabled with preview, show overlay
+    if (!recording && cameraEnabled && cameraDeviceId && previewEnabled) {
+      const api = getCameraOverlayAPI();
+      api.showCameraOverlay?.(cameraDeviceId);
+    }
+  }, [recording, cameraEnabled, cameraDeviceId, previewEnabled]);
 
   // Handle recording state changes
   useEffect(() => {
