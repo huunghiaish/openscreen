@@ -467,8 +467,8 @@ export function SettingsPanel({
           <TabsTrigger value="gradient" className="data-[state=active]:bg-[#34B27B] data-[state=active]:text-white text-slate-400 py-2 rounded-lg transition-all">Gradient</TabsTrigger>
         </TabsList>
         
-        <div className="min-h-[220px] max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
-          <TabsContent value="image" className="mt-0 space-y-3 px-2">
+        <div className="min-h-[220px] max-h-[320px] overflow-y-auto overflow-x-hidden custom-scrollbar pr-2">
+          <TabsContent value="image" className="mt-0 space-y-3 px-2 pb-2">
             {/* Upload Button */}
             <input
               type="file"
@@ -546,7 +546,7 @@ export function SettingsPanel({
             </div>
           </TabsContent>
           
-          <TabsContent value="color" className="mt-0 px-2">
+          <TabsContent value="color" className="mt-0 px-2 pb-4">
             <div className="p-1">
               <Block
                 color={selectedColor}
@@ -563,7 +563,7 @@ export function SettingsPanel({
             </div>
           </TabsContent>
           
-          <TabsContent value="gradient" className="mt-0 px-2">
+          <TabsContent value="gradient" className="mt-0 px-2 pb-2">
             <div className="grid grid-cols-6 gap-2.5">
               {GRADIENTS.map((g, idx) => (
                 <div
@@ -585,7 +585,7 @@ export function SettingsPanel({
         </div>
       </Tabs>
 
-      <div className="mt-4 pt-4 border-t border-white/5">
+      <div className="mt-20 pt-4 border-t border-white/5">
         {/* Format Selection */}
         <div className="mb-4">
           <div className="mb-2 text-xs font-medium text-slate-400 uppercase tracking-wider">Export Format</div>

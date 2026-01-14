@@ -45,11 +45,11 @@ export default function VideoEditor() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [wallpaper, setWallpaper] = useState<string>(WALLPAPER_PATHS[0]);
-  const [shadowIntensity, setShadowIntensity] = useState(0);
+  const [shadowIntensity, setShadowIntensity] = useState(0.25);
   const [showBlur, setShowBlur] = useState(false);
   const [motionBlurEnabled, setMotionBlurEnabled] = useState(true);
-  const [borderRadius, setBorderRadius] = useState(0);
-  const [padding, setPadding] = useState(50);
+  const [borderRadius, setBorderRadius] = useState(5);
+  const [padding, setPadding] = useState(20);
   const [cropRegion, setCropRegion] = useState<CropRegion>(DEFAULT_CROP_REGION);
   const [zoomRegions, setZoomRegions] = useState<ZoomRegion[]>([]);
   const [selectedZoomId, setSelectedZoomId] = useState<string | null>(null);
@@ -475,43 +475,6 @@ export default function VideoEditor() {
     }
   }, [selectedAnnotationId, annotationRegions]);
 
-  const handleOpenExportDialog = useCallback(() => {
-    if (!videoPath) {
-      toast.error('No video loaded');
-      return;
-    }
-
-    const video = videoPlaybackRef.current?.video;
-    if (!video) {
-      toast.error('Video not ready');
-      return;
-    }
-
-    // Build export settings from current state
-    const sourceWidth = video.videoWidth || 1920;
-    const sourceHeight = video.videoHeight || 1080;
-    const gifDimensions = calculateOutputDimensions(sourceWidth, sourceHeight, gifSizePreset, GIF_SIZE_PRESETS);
-
-    const settings: ExportSettings = {
-      format: exportFormat,
-      quality: exportFormat === 'mp4' ? exportQuality : undefined,
-      gifConfig: exportFormat === 'gif' ? {
-        frameRate: gifFrameRate,
-        loop: gifLoop,
-        sizePreset: gifSizePreset,
-        width: gifDimensions.width,
-        height: gifDimensions.height,
-      } : undefined,
-    };
-
-    setShowExportDialog(true);
-    setExportError(null);
-    
-    // Start export immediately
-    handleExport(settings);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoPath, exportFormat, exportQuality, gifFrameRate, gifLoop, gifSizePreset]);
-
   const handleExport = useCallback(async (settings: ExportSettings) => {
     if (!videoPath) {
       toast.error('No video loaded');
@@ -751,6 +714,42 @@ export default function VideoEditor() {
       setExportProgress(null);
     }
   }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, cameraPipConfig]);
+
+  const handleOpenExportDialog = useCallback(() => {
+    if (!videoPath) {
+      toast.error('No video loaded');
+      return;
+    }
+
+    const video = videoPlaybackRef.current?.video;
+    if (!video) {
+      toast.error('Video not ready');
+      return;
+    }
+
+    // Build export settings from current state
+    const sourceWidth = video.videoWidth || 1920;
+    const sourceHeight = video.videoHeight || 1080;
+    const gifDimensions = calculateOutputDimensions(sourceWidth, sourceHeight, gifSizePreset, GIF_SIZE_PRESETS);
+
+    const settings: ExportSettings = {
+      format: exportFormat,
+      quality: exportFormat === 'mp4' ? exportQuality : undefined,
+      gifConfig: exportFormat === 'gif' ? {
+        frameRate: gifFrameRate,
+        loop: gifLoop,
+        sizePreset: gifSizePreset,
+        width: gifDimensions.width,
+        height: gifDimensions.height,
+      } : undefined,
+    };
+
+    setShowExportDialog(true);
+    setExportError(null);
+
+    // Start export immediately
+    handleExport(settings);
+  }, [videoPath, exportFormat, exportQuality, gifFrameRate, gifLoop, gifSizePreset, handleExport]);
 
   const handleCancelExport = useCallback(() => {
     if (exporterRef.current) {

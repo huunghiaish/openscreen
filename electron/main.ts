@@ -1,8 +1,8 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, Tray, Menu, nativeImage, screen } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs/promises'
-import { createHudOverlayWindow, createEditorWindow, createSourceSelectorWindow } from './windows'
+import { createHudOverlayWindow, createEditorWindow, createSourceSelectorWindow, createCameraOverlayWindow } from './windows'
 import { registerIpcHandlers } from './ipc/handlers'
 
 
@@ -42,6 +42,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 // Window references
 let mainWindow: BrowserWindow | null = null
 let sourceSelectorWindow: BrowserWindow | null = null
+let cameraOverlayWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let selectedSourceName = ''
 
@@ -120,6 +121,51 @@ function createSourceSelectorWindowWrapper() {
   return sourceSelectorWindow
 }
 
+function showCameraOverlayWindowWrapper(deviceId: string) {
+  // Close existing camera window if any
+  if (cameraOverlayWindow && !cameraOverlayWindow.isDestroyed()) {
+    cameraOverlayWindow.close()
+  }
+
+  cameraOverlayWindow = createCameraOverlayWindow()
+
+  // Position in bottom-right of screen
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
+  const windowWidth = 320
+  const windowHeight = 240
+  const margin = 24
+
+  cameraOverlayWindow.setBounds({
+    x: screenWidth - windowWidth - margin,
+    y: screenHeight - windowHeight - margin,
+    width: windowWidth,
+    height: windowHeight,
+  })
+
+  cameraOverlayWindow.on('closed', () => {
+    cameraOverlayWindow = null
+  })
+
+  // Wait for window to load, then send device ID
+  cameraOverlayWindow.webContents.on('did-finish-load', () => {
+    if (cameraOverlayWindow && !cameraOverlayWindow.isDestroyed()) {
+      cameraOverlayWindow.webContents.executeJavaScript(
+        `window.startCameraPreview && window.startCameraPreview('${deviceId}')`
+      )
+    }
+  })
+
+  cameraOverlayWindow.show()
+}
+
+function hideCameraOverlayWindowWrapper() {
+  if (cameraOverlayWindow && !cameraOverlayWindow.isDestroyed()) {
+    cameraOverlayWindow.close()
+    cameraOverlayWindow = null
+  }
+}
+
 // On macOS, applications and their menu bar stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
@@ -159,8 +205,12 @@ app.whenReady().then(async () => {
       updateTrayMenu(recording);
       if (!recording) {
         if (mainWindow) mainWindow.restore();
+        // Also hide camera overlay when recording stops
+        hideCameraOverlayWindowWrapper();
       }
-    }
+    },
+    showCameraOverlayWindowWrapper,
+    hideCameraOverlayWindowWrapper
   )
   createWindow()
 })

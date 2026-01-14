@@ -146,8 +146,16 @@ export class FrameRenderer {
 
     // Initialize camera PiP renderer if config provided
     if (this.config.cameraExport?.videoUrl) {
+      console.log('[FrameRenderer] Initializing camera PiP with config:', {
+        videoUrl: this.config.cameraExport.videoUrl,
+        pipConfig: this.config.cameraExport.pipConfig,
+      });
       this.cameraPipRenderer = new CameraPipRenderer(this.config.cameraExport);
-      await this.cameraPipRenderer.initialize();
+      const success = await this.cameraPipRenderer.initialize();
+      if (!success) {
+        console.warn('[FrameRenderer] Camera PiP initialization failed');
+        this.cameraPipRenderer = null;
+      }
     }
   }
 

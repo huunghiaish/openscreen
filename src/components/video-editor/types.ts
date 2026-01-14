@@ -136,7 +136,7 @@ export const DEFAULT_CAMERA_PIP_CONFIG: CameraPipConfig = {
   enabled: true,
   shape: 'rectangle',
   position: 'bottom-right',
-  size: 'medium',
+  size: 'small',
   borderRadius: 10,
 };
 

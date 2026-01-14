@@ -126,8 +126,33 @@ function createSourceSelectorWindow() {
   }
   return win;
 }
+function createCameraOverlayWindow() {
+  const win = new BrowserWindow({
+    width: 320,
+    height: 240,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    resizable: false,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname$1, "preload.mjs"),
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+  if (VITE_DEV_SERVER_URL$1) {
+    win.loadURL(VITE_DEV_SERVER_URL$1 + "?windowType=camera-overlay");
+  } else {
+    win.loadFile(path.join(RENDERER_DIST$1, "index.html"), {
+      query: { windowType: "camera-overlay" }
+    });
+  }
+  return win;
+}
 let selectedSource = null;
-function registerIpcHandlers(createEditorWindow2, createSourceSelectorWindow2, getMainWindow, getSourceSelectorWindow, onRecordingStateChange) {
+function registerIpcHandlers(createEditorWindow2, createSourceSelectorWindow2, getMainWindow, getSourceSelectorWindow, onRecordingStateChange, showCameraOverlay, hideCameraOverlay) {
   ipcMain.handle("get-sources", async (_, opts) => {
     const sources = await desktopCapturer.getSources(opts);
     return sources.map((source) => ({
@@ -204,6 +229,16 @@ function registerIpcHandlers(createEditorWindow2, createSourceSelectorWindow2, g
       onRecordingStateChange(recording, source.name);
     }
   });
+  ipcMain.handle("show-camera-overlay", (_, deviceId) => {
+    if (showCameraOverlay) {
+      showCameraOverlay(deviceId);
+    }
+  });
+  ipcMain.handle("hide-camera-overlay", () => {
+    if (hideCameraOverlay) {
+      hideCameraOverlay();
+    }
+  });
   ipcMain.handle("open-external-url", async (_, url) => {
     try {
       await shell.openExternal(url);
@@ -229,12 +264,13 @@ function registerIpcHandlers(createEditorWindow2, createSourceSelectorWindow2, g
       const mainWindow2 = getMainWindow();
       const isGif = fileName.toLowerCase().endsWith(".gif");
       const filters = isGif ? [{ name: "GIF Image", extensions: ["gif"] }] : [{ name: "MP4 Video", extensions: ["mp4"] }];
-      const result = await dialog.showSaveDialog(mainWindow2 || void 0, {
+      const dialogOptions = {
         title: isGif ? "Save Exported GIF" : "Save Exported Video",
         defaultPath: path.join(app.getPath("downloads"), fileName),
         filters,
         properties: ["createDirectory", "showOverwriteConfirmation"]
-      });
+      };
+      const result = mainWindow2 ? await dialog.showSaveDialog(mainWindow2, dialogOptions) : await dialog.showSaveDialog(dialogOptions);
       if (result.canceled || !result.filePath) {
         return {
           success: false,
@@ -299,6 +335,41 @@ function registerIpcHandlers(createEditorWindow2, createSourceSelectorWindow2, g
   ipcMain.handle("get-platform", () => {
     return process.platform;
   });
+  ipcMain.handle("store-camera-recording", async (_, videoData, fileName) => {
+    try {
+      const videoPath = path.join(RECORDINGS_DIR, fileName);
+      await fs.writeFile(videoPath, Buffer.from(videoData));
+      return { success: true, path: videoPath };
+    } catch (error) {
+      console.error("Failed to store camera recording:", error);
+      return { success: false, error: String(error) };
+    }
+  });
+  ipcMain.handle("get-camera-video-path", async (_, mainVideoPath) => {
+    try {
+      const filename = path.basename(mainVideoPath);
+      const match = filename.match(/recording-(\d+)\.webm$/);
+      if (!match) {
+        return { success: false, path: null };
+      }
+      const timestamp = match[1];
+      const cameraFileName = `camera-${timestamp}.webm`;
+      const cameraPath = path.join(RECORDINGS_DIR, cameraFileName);
+      const resolvedPath = path.resolve(cameraPath);
+      const resolvedRecordingsDir = path.resolve(RECORDINGS_DIR);
+      if (!resolvedPath.startsWith(resolvedRecordingsDir + path.sep)) {
+        return { success: false, path: null };
+      }
+      try {
+        await fs.access(cameraPath);
+        return { success: true, path: cameraPath };
+      } catch {
+        return { success: false, path: null };
+      }
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
 }
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RECORDINGS_DIR = path.join(app.getPath("userData"), "recordings");
@@ -318,6 +389,7 @@ const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
 let mainWindow = null;
 let sourceSelectorWindow = null;
+let cameraOverlayWindow = null;
 let tray = null;
 let selectedSourceName = "";
 const defaultTrayIcon = getTrayIcon("openscreen.png");
@@ -384,6 +456,40 @@ function createSourceSelectorWindowWrapper() {
   });
   return sourceSelectorWindow;
 }
+function showCameraOverlayWindowWrapper(deviceId) {
+  if (cameraOverlayWindow && !cameraOverlayWindow.isDestroyed()) {
+    cameraOverlayWindow.close();
+  }
+  cameraOverlayWindow = createCameraOverlayWindow();
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const windowWidth = 320;
+  const windowHeight = 240;
+  const margin = 24;
+  cameraOverlayWindow.setBounds({
+    x: screenWidth - windowWidth - margin,
+    y: screenHeight - windowHeight - margin,
+    width: windowWidth,
+    height: windowHeight
+  });
+  cameraOverlayWindow.on("closed", () => {
+    cameraOverlayWindow = null;
+  });
+  cameraOverlayWindow.webContents.on("did-finish-load", () => {
+    if (cameraOverlayWindow && !cameraOverlayWindow.isDestroyed()) {
+      cameraOverlayWindow.webContents.executeJavaScript(
+        `window.startCameraPreview && window.startCameraPreview('${deviceId}')`
+      );
+    }
+  });
+  cameraOverlayWindow.show();
+}
+function hideCameraOverlayWindowWrapper() {
+  if (cameraOverlayWindow && !cameraOverlayWindow.isDestroyed()) {
+    cameraOverlayWindow.close();
+    cameraOverlayWindow = null;
+  }
+}
 app.on("window-all-closed", () => {
 });
 app.on("activate", () => {
@@ -410,8 +516,11 @@ app.whenReady().then(async () => {
       updateTrayMenu(recording);
       if (!recording) {
         if (mainWindow) mainWindow.restore();
+        hideCameraOverlayWindowWrapper();
       }
-    }
+    },
+    showCameraOverlayWindowWrapper,
+    hideCameraOverlayWindowWrapper
   );
   createWindow();
 });
