@@ -949,6 +949,8 @@ export default function VideoEditor() {
                       onAnnotationSizeChange={handleAnnotationSizeChange}
                       cameraVideoPath={cameraVideoPath}
                       cameraPipConfig={cameraPipConfig}
+                      micAudioPath={micAudioPath}
+                      systemAudioPath={systemAudioPath}
                     />
                   </div>
                 </div>

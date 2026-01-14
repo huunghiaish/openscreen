@@ -45,22 +45,26 @@ export function MicSettingsDropdown({
   ) : null;
 
   return (
-    <DeviceDropdown
-      icon={
-        isActive ? (
-          <FiMic size={14} className="text-green-400" />
-        ) : (
-          <FiMicOff size={14} className="text-white/50" />
-        )
-      }
-      ariaLabel="Toggle microphone"
-      devices={microphones}
-      selectedDeviceId={selectedMicId}
-      onSelectDevice={handleMicSelect}
-      disabled={disabled}
-      headerContent={levelMeterContent}
-      enableClickToggle={true}
-      lastUsedDeviceId={lastUsedMicRef.current}
-    />
+    <div className="flex items-center gap-0.5">
+      <DeviceDropdown
+        icon={
+          isActive ? (
+            <FiMic size={14} className="text-green-400" />
+          ) : (
+            <FiMicOff size={14} className="text-white/50" />
+          )
+        }
+        ariaLabel="Toggle microphone"
+        devices={microphones}
+        selectedDeviceId={selectedMicId}
+        onSelectDevice={handleMicSelect}
+        disabled={disabled}
+        headerContent={levelMeterContent}
+        enableClickToggle={true}
+        lastUsedDeviceId={lastUsedMicRef.current}
+      />
+      {/* Inline level indicator visible when mic is active */}
+      {isActive && <AudioLevelMeter level={audioLevel} size="inline" />}
+    </div>
   );
 }

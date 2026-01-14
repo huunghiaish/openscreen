@@ -44,6 +44,10 @@ interface VideoPlaybackProps {
   onAnnotationSizeChange?: (id: string, size: { width: number; height: number }) => void;
   cameraVideoPath?: string | null;
   cameraPipConfig?: CameraPipConfig;
+  /** Microphone audio track path for synchronized playback */
+  micAudioPath?: string | null;
+  /** System audio track path for synchronized playback */
+  systemAudioPath?: string | null;
 }
 
 export interface VideoPlaybackRef {
@@ -85,8 +89,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   onAnnotationSizeChange,
   cameraVideoPath,
   cameraPipConfig = DEFAULT_CAMERA_PIP_CONFIG,
+  micAudioPath,
+  systemAudioPath,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const micAudioRef = useRef<HTMLAudioElement | null>(null);
+  const systemAudioRef = useRef<HTMLAudioElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<Application | null>(null);
   const videoSpriteRef = useRef<Sprite | null>(null);
@@ -607,6 +615,64 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pixiReady, videoReady, onTimeUpdate, updateOverlayForRegion]);
 
+  // Sync mic and system audio with video playback
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Debug: log audio paths
+    console.log('[VideoPlayback] Audio paths:', { micAudioPath, systemAudioPath });
+
+    const syncAudioTime = () => {
+      // Access refs inside handler to get current values
+      const micAudio = micAudioRef.current;
+      const systemAudio = systemAudioRef.current;
+      if (micAudio && Math.abs(micAudio.currentTime - video.currentTime) > 0.1) {
+        micAudio.currentTime = video.currentTime;
+      }
+      if (systemAudio && Math.abs(systemAudio.currentTime - video.currentTime) > 0.1) {
+        systemAudio.currentTime = video.currentTime;
+      }
+    };
+
+    const handleVideoPlay = () => {
+      syncAudioTime();
+      // Access refs inside handler to get current values
+      const micAudio = micAudioRef.current;
+      const systemAudio = systemAudioRef.current;
+      console.log('[VideoPlayback] Video play - attempting audio sync', {
+        hasMicAudio: !!micAudio,
+        hasSystemAudio: !!systemAudio,
+        micReadyState: micAudio?.readyState,
+        systemReadyState: systemAudio?.readyState,
+      });
+      micAudio?.play().catch((err) => console.warn('[VideoPlayback] Mic audio play error:', err));
+      systemAudio?.play().catch((err) => console.warn('[VideoPlayback] System audio play error:', err));
+    };
+
+    const handleVideoPause = () => {
+      micAudioRef.current?.pause();
+      systemAudioRef.current?.pause();
+      syncAudioTime();
+    };
+
+    const handleVideoSeeked = () => {
+      syncAudioTime();
+    };
+
+    video.addEventListener('play', handleVideoPlay);
+    video.addEventListener('pause', handleVideoPause);
+    video.addEventListener('ended', handleVideoPause);
+    video.addEventListener('seeked', handleVideoSeeked);
+
+    return () => {
+      video.removeEventListener('play', handleVideoPlay);
+      video.removeEventListener('pause', handleVideoPause);
+      video.removeEventListener('ended', handleVideoPause);
+      video.removeEventListener('seeked', handleVideoSeeked);
+    };
+  }, [micAudioPath, systemAudioPath]);
+
   useEffect(() => {
     if (!pixiReady || !videoReady) return;
 
@@ -900,6 +966,23 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
         }}
         onError={() => onError('Failed to load video')}
       />
+      {/* Hidden audio elements for mic and system audio playback */}
+      {micAudioPath && (
+        <audio
+          ref={micAudioRef}
+          src={micAudioPath}
+          className="hidden"
+          preload="auto"
+        />
+      )}
+      {systemAudioPath && (
+        <audio
+          ref={systemAudioRef}
+          src={systemAudioPath}
+          className="hidden"
+          preload="auto"
+        />
+      )}
     </div>
   );
 });

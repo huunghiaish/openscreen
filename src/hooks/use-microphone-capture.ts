@@ -38,6 +38,7 @@ export function useMicrophoneCapture(): UseMicrophoneCaptureReturn {
   const analyser = useRef<AnalyserNode | null>(null);
   const chunks = useRef<Blob[]>([]);
   const animationFrame = useRef<number | null>(null);
+  const streamRef = useRef<MediaStream | null>(null); // Use ref to avoid callback dependency issues
   const recordingPromise = useRef<{
     resolve: (blob: Blob | null) => void;
   } | null>(null);
@@ -85,10 +86,17 @@ export function useMicrophoneCapture(): UseMicrophoneCaptureReturn {
         },
       });
 
+      streamRef.current = mediaStream;
       setStream(mediaStream);
 
       // Setup Web Audio API for real-time level metering
       audioContext.current = new AudioContext();
+
+      // Resume AudioContext if suspended (browser security policy)
+      if (audioContext.current.state === 'suspended') {
+        await audioContext.current.resume();
+      }
+
       const source = audioContext.current.createMediaStreamSource(mediaStream);
       analyser.current = audioContext.current.createAnalyser();
       analyser.current.fftSize = 256; // Small FFT for fast updates
@@ -104,6 +112,7 @@ export function useMicrophoneCapture(): UseMicrophoneCaptureReturn {
 
   /**
    * Stop capture and release all resources.
+   * Uses ref to avoid callback dependency changes that cause infinite loops.
    */
   const stopCapture = useCallback(() => {
     // Stop level metering animation
@@ -119,9 +128,10 @@ export function useMicrophoneCapture(): UseMicrophoneCaptureReturn {
       analyser.current = null;
     }
 
-    // Stop media stream tracks
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+    // Stop media stream tracks (use ref to avoid dependency issues)
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
       setStream(null);
     }
 
@@ -132,14 +142,15 @@ export function useMicrophoneCapture(): UseMicrophoneCaptureReturn {
 
     setRecording(false);
     setAudioLevel(0);
-  }, [stream]);
+  }, []); // Empty deps - uses refs instead
 
   /**
    * Begin recording audio. Must call startCapture first.
    * Records to WebM with Opus codec for efficient encoding.
    */
   const startRecording = useCallback(() => {
-    if (!stream) return;
+    if (!streamRef.current) return;
+    const currentStream = streamRef.current;
 
     chunks.current = [];
 
@@ -148,7 +159,7 @@ export function useMicrophoneCapture(): UseMicrophoneCaptureReturn {
       ? 'audio/webm;codecs=opus'
       : 'audio/webm';
 
-    const recorder = new MediaRecorder(stream, {
+    const recorder = new MediaRecorder(currentStream, {
       mimeType,
       audioBitsPerSecond: 128_000, // 128 kbps - good quality, small file
     });
@@ -170,7 +181,7 @@ export function useMicrophoneCapture(): UseMicrophoneCaptureReturn {
     mediaRecorder.current = recorder;
     recorder.start(1000); // Collect data every second
     setRecording(true);
-  }, [stream]);
+  }, []); // Empty deps - uses refs instead
 
   /**
    * Stop recording and return the audio blob.
@@ -196,11 +207,11 @@ export function useMicrophoneCapture(): UseMicrophoneCaptureReturn {
       if (audioContext.current) {
         audioContext.current.close();
       }
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
-  }, [stream]);
+  }, []); // Empty deps - cleanup refs on unmount only
 
   return {
     stream,

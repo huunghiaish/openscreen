@@ -59,6 +59,8 @@ export function LaunchWindow() {
   // Screen recording
   const { recording, toggleRecording } = useScreenRecorder({
     cameraDeviceId: cameraEnabled ? selectedCameraId : null,
+    micDeviceId: selectedMicId,
+    systemAudioEnabled,
   });
 
   // Recording timer

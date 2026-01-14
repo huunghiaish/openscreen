@@ -18,7 +18,7 @@ export function MediaTrackRow({ track }: MediaTrackRowProps) {
 
   return (
     <div
-      className="border-b border-[#18181b] bg-[#18181b]"
+      className="border-b border-[#18181b] bg-[#18181b] relative"
       style={{ ...rowWrapperStyle, minHeight: 40, marginBottom: 2 }}
     >
       <div ref={setNodeRef} style={rowStyle}>
