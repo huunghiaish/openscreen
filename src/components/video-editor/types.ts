@@ -137,7 +137,7 @@ export const DEFAULT_CAMERA_PIP_CONFIG: CameraPipConfig = {
   shape: 'rectangle',
   position: 'bottom-right',
   size: 'medium',
-  borderRadius: 20,
+  borderRadius: 10,
 };
 
 // Size presets as percentage of container width
