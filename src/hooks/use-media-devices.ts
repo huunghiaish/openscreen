@@ -6,7 +6,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { UseMediaDevicesReturn, PermissionStatus } from '@/types/media-devices';
 import { DEVICE_STORAGE_KEYS } from '@/types/media-devices';
-import { supportsSystemAudio } from '@/lib/platform-utils';
 
 /**
  * Load persisted value from localStorage.
@@ -41,12 +40,12 @@ export function useMediaDevices(): UseMediaDevicesReturn {
   const [selectedMicId, setSelectedMicIdState] = useState<string | null>(() =>
     loadFromStorage(DEVICE_STORAGE_KEYS.SELECTED_MIC, null)
   );
-  const [systemAudioEnabled, setSystemAudioEnabledState] = useState(() =>
-    loadFromStorage(DEVICE_STORAGE_KEYS.SYSTEM_AUDIO_ENABLED, false)
-  );
+  // Always default to true - system audio should be enabled by default
+  const [systemAudioEnabled, setSystemAudioEnabledState] = useState(true);
   const [permissionStatus, setPermissionStatus] = useState<PermissionStatus>('unknown');
   const [isLoading, setIsLoading] = useState(true);
-  const [systemAudioSupported] = useState(() => supportsSystemAudio());
+  // Always supported on macOS Electron app
+  const [systemAudioSupported] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Persist selection to localStorage with validation

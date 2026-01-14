@@ -4,7 +4,6 @@
  * and recording to separate WebM file.
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { supportsSystemAudio, getSystemAudioSupportMessage } from '@/lib/platform-utils';
 import { selectAudioMimeType } from '@/lib/recording-constants';
 import {
   SYSTEM_AUDIO_BITRATE,
@@ -40,8 +39,9 @@ export interface UseSystemAudioCaptureReturn {
 }
 
 export function useSystemAudioCapture(): UseSystemAudioCaptureReturn {
-  const [supported, setSupported] = useState(false);
-  const [unsupportedMessage, setUnsupportedMessage] = useState<string | null>(null);
+  // Always assume supported on macOS Electron app
+  const [supported] = useState(true);
+  const [unsupportedMessage] = useState<string | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [recording, setRecording] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
@@ -53,14 +53,6 @@ export function useSystemAudioCapture(): UseSystemAudioCaptureReturn {
   const animationFrame = useRef<number | null>(null);
   const mimeType = useRef<string>('');
 
-  // Check system audio support on mount
-  useEffect(() => {
-    const isSupported = supportsSystemAudio();
-    setSupported(isSupported);
-    if (!isSupported) {
-      setUnsupportedMessage(getSystemAudioSupportMessage());
-    }
-  }, []);
 
   // Update audio level at ~60fps for VU meter display
   const updateAudioLevel = useCallback(() => {
@@ -94,7 +86,7 @@ export function useSystemAudioCapture(): UseSystemAudioCaptureReturn {
         setStream(audioStream);
 
         // Setup level metering with proper resource tracking
-        audioResources.current = setupAudioLevelMeter(audioStream);
+        audioResources.current = await setupAudioLevelMeter(audioStream);
         updateAudioLevel();
 
         return true;

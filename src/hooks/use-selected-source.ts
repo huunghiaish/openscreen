@@ -7,6 +7,8 @@ import { useState, useEffect, useCallback } from 'react';
 interface UseSelectedSourceReturn {
   /** Selected source display name */
   sourceName: string;
+  /** Selected source ID for capture */
+  sourceId: string | null;
   /** Whether a source has been selected */
   hasSelectedSource: boolean;
   /** Open source selector window */
@@ -22,6 +24,7 @@ const SOURCE_POLL_INTERVAL = 500;
  */
 export function useSelectedSource(): UseSelectedSourceReturn {
   const [sourceName, setSourceName] = useState('Screen');
+  const [sourceId, setSourceId] = useState<string | null>(null);
   const [hasSelectedSource, setHasSelectedSource] = useState(false);
 
   useEffect(() => {
@@ -32,9 +35,11 @@ export function useSelectedSource(): UseSelectedSourceReturn {
         const source = await window.electronAPI.getSelectedSource();
         if (source) {
           setSourceName(source.name);
+          setSourceId(source.id);
           setHasSelectedSource(true);
         } else {
           setSourceName('Screen');
+          setSourceId(null);
           setHasSelectedSource(false);
         }
       } catch (err) {
@@ -55,6 +60,7 @@ export function useSelectedSource(): UseSelectedSourceReturn {
 
   return {
     sourceName,
+    sourceId,
     hasSelectedSource,
     openSourceSelector,
   };

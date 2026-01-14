@@ -35,15 +35,6 @@ export function MicSettingsDropdown({
     onSelectMic(deviceId);
   }, [onSelectMic]);
 
-  const levelMeterContent = isActive ? (
-    <div className="px-3 py-2">
-      <label className="text-xs text-white/60 block mb-2" id="mic-level-label">
-        Input Level
-      </label>
-      <AudioLevelMeter level={audioLevel} size="medium" />
-    </div>
-  ) : null;
-
   return (
     <div className="flex items-center gap-0.5">
       <DeviceDropdown
@@ -59,7 +50,6 @@ export function MicSettingsDropdown({
         selectedDeviceId={selectedMicId}
         onSelectDevice={handleMicSelect}
         disabled={disabled}
-        headerContent={levelMeterContent}
         enableClickToggle={true}
         lastUsedDeviceId={lastUsedMicRef.current}
       />

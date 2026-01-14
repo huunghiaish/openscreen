@@ -7,6 +7,7 @@ import styles from './LaunchWindow.module.css';
 import { useScreenRecorder } from '@/hooks/useScreenRecorder';
 import { useMediaDevices } from '@/hooks/use-media-devices';
 import { useMicrophoneCapture } from '@/hooks/use-microphone-capture';
+import { useSystemAudioCapture } from '@/hooks/use-system-audio-capture';
 import { useCameraOverlay } from '@/hooks/use-camera-overlay';
 import { useRecordingTimer } from '@/hooks/use-recording-timer';
 import { useSelectedSource } from '@/hooks/use-selected-source';
@@ -21,7 +22,6 @@ import { ContentClamp } from '@/components/ui/content-clamp';
 import { CameraSettingsDropdown } from './camera-settings-dropdown';
 import { MicSettingsDropdown } from './mic-settings-dropdown';
 import { SystemAudioToggle } from './system-audio-toggle';
-import type { CameraPosition, CameraSize } from '@/types/media-devices';
 
 export function LaunchWindow() {
   // Device management
@@ -46,12 +46,17 @@ export function LaunchWindow() {
     stopCapture: stopMicCapture,
   } = useMicrophoneCapture();
 
-  // Source selection
-  const { sourceName, hasSelectedSource, openSourceSelector } = useSelectedSource();
+  // System audio capture for audio level metering
+  const {
+    audioLevel: systemAudioLevel,
+    startCapture: startSystemAudioCapture,
+    stopCapture: stopSystemAudioCapture,
+  } = useSystemAudioCapture();
 
-  // Camera settings state (defaults from plan: bottom-right, medium)
-  const [cameraPosition, setCameraPosition] = useState<CameraPosition>('bottom-right');
-  const [cameraSize, setCameraSize] = useState<CameraSize>('medium');
+  // Source selection
+  const { sourceName, sourceId, hasSelectedSource, openSourceSelector } = useSelectedSource();
+
+  // Camera preview state
   const [cameraPreviewEnabled, setCameraPreviewEnabled] = useState(true);
 
   const cameraEnabled = selectedCameraId !== null;
@@ -82,6 +87,15 @@ export function LaunchWindow() {
       stopMicCapture();
     }
   }, [selectedMicId, startMicCapture, stopMicCapture]);
+
+  // Start/stop system audio capture based on source and enabled state
+  useEffect(() => {
+    if (systemAudioEnabled && sourceId && !recording) {
+      startSystemAudioCapture(sourceId);
+    } else {
+      stopSystemAudioCapture();
+    }
+  }, [systemAudioEnabled, sourceId, recording, startSystemAudioCapture, stopSystemAudioCapture]);
 
   // Handle camera selection with permission request
   const handleCameraSelect = async (deviceId: string | null) => {
@@ -129,9 +143,9 @@ export function LaunchWindow() {
     : 'Requires macOS 13.2+ for system audio capture';
 
   return (
-    <div className="w-full h-full flex items-center bg-transparent">
+    <div className="w-full h-full flex items-end pb-4 bg-transparent">
       <div
-        className={`w-full max-w-[560px] mx-auto flex items-center justify-between px-4 py-2 ${styles.electronDrag}`}
+        className={`w-full max-w-[680px] mx-auto flex items-center justify-between px-4 py-2 ${styles.electronDrag}`}
         style={{
           borderRadius: 16,
           background: 'linear-gradient(135deg, rgba(30,30,40,0.92) 0%, rgba(20,20,30,0.85) 100%)',
@@ -151,7 +165,7 @@ export function LaunchWindow() {
         <Button
           variant="link"
           size="sm"
-          className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-left text-xs ${styles.electronNoDrag}`}
+          className={`gap-1.5 text-white bg-transparent hover:bg-transparent px-2 flex-1 text-left text-xs ${styles.electronNoDrag}`}
           onClick={openSourceSelector}
           disabled={recording}
           aria-label="Select screen or window to record"
@@ -160,7 +174,7 @@ export function LaunchWindow() {
           <ContentClamp truncateLength={6}>{sourceName}</ContentClamp>
         </Button>
 
-        <div className="w-px h-6 bg-white/30" aria-hidden="true" />
+        <div className="w-px h-6 bg-white/30 mx-2" aria-hidden="true" />
 
         {/* Record button */}
         <Button
@@ -184,19 +198,15 @@ export function LaunchWindow() {
           )}
         </Button>
 
-        <div className="w-px h-6 bg-white/30" aria-hidden="true" />
+        <div className="w-px h-6 bg-white/30 mx-2" aria-hidden="true" />
 
         {/* Device controls group */}
-        <div className={`flex items-center gap-1 ${styles.electronNoDrag}`} role="group" aria-label="Device controls">
+        <div className={`flex items-center gap-3 ${styles.electronNoDrag}`} role="group" aria-label="Device controls">
           {/* Camera dropdown */}
           <CameraSettingsDropdown
             cameras={cameras}
             selectedCameraId={selectedCameraId}
             onSelectCamera={handleCameraSelect}
-            position={cameraPosition}
-            onPositionChange={setCameraPosition}
-            size={cameraSize}
-            onSizeChange={setCameraSize}
             disabled={recording}
           />
 
@@ -207,7 +217,7 @@ export function LaunchWindow() {
             onClick={toggleCameraPreview}
             disabled={recording || !cameraEnabled}
             title={cameraPreviewEnabled ? 'Hide camera preview' : 'Show camera preview'}
-            className="bg-transparent hover:bg-transparent px-1"
+            className="bg-transparent hover:bg-transparent px-0"
             style={{ opacity: cameraEnabled ? 1 : 0.5 }}
             aria-label={cameraPreviewEnabled ? 'Hide camera preview' : 'Show camera preview'}
             aria-pressed={cameraPreviewEnabled}
@@ -235,17 +245,18 @@ export function LaunchWindow() {
             supported={systemAudioSupported}
             unsupportedMessage={systemAudioUnsupportedMessage}
             disabled={recording}
+            audioLevel={systemAudioLevel}
           />
         </div>
 
-        <div className="w-px h-6 bg-white/30" aria-hidden="true" />
+        <div className="w-px h-6 bg-white/30 mx-2" aria-hidden="true" />
 
         {/* Open video file button */}
         <Button
           variant="link"
           size="sm"
           onClick={openVideoFile}
-          className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-right text-xs ${styles.electronNoDrag} ${styles.folderButton}`}
+          className={`gap-1.5 text-white bg-transparent hover:bg-transparent px-2 flex-1 text-right text-xs ${styles.electronNoDrag} ${styles.folderButton}`}
           disabled={recording}
           aria-label="Open video file"
         >
