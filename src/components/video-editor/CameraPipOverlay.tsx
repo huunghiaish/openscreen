@@ -44,6 +44,7 @@ export const CameraPipOverlay = forwardRef<CameraPipOverlayRef, CameraPipOverlay
   ({ videoPath, config, containerWidth, mainVideoRef, onError }, ref) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const [hasError, setHasError] = useState(false);
+    const [videoAspectRatio, setVideoAspectRatio] = useState<number | null>(null);
 
     useImperativeHandle(ref, () => ({
       video: videoRef.current,
@@ -90,9 +91,10 @@ export const CameraPipOverlay = forwardRef<CameraPipOverlayRef, CameraPipOverlay
       };
     }, [mainVideoRef]);
 
-    // Reset error state when video path changes
+    // Reset error state and aspect ratio when video path changes
     useEffect(() => {
       setHasError(false);
+      setVideoAspectRatio(null);
     }, [videoPath]);
 
     // Get shape-dependent styles
@@ -105,7 +107,23 @@ export const CameraPipOverlay = forwardRef<CameraPipOverlayRef, CameraPipOverlay
 
     // Calculate size and position
     const sizePercent = CAMERA_PIP_SIZE_PRESETS[config.size];
-    const size = Math.round(containerWidth * (sizePercent / 100));
+    const baseSize = Math.round(containerWidth * (sizePercent / 100));
+
+    // For rectangle: use original aspect ratio; for square/circle: use 1:1
+    let pipWidth = baseSize;
+    let pipHeight = baseSize;
+    if (!shapeStyles.forceSquare && videoAspectRatio && videoAspectRatio !== 1) {
+      // Rectangle shape: maintain original camera aspect ratio
+      if (videoAspectRatio > 1) {
+        // Landscape camera: width = baseSize, height = baseSize / aspectRatio
+        pipWidth = baseSize;
+        pipHeight = Math.round(baseSize / videoAspectRatio);
+      } else {
+        // Portrait camera: height = baseSize, width = baseSize * aspectRatio
+        pipHeight = baseSize;
+        pipWidth = Math.round(baseSize * videoAspectRatio);
+      }
+    }
 
     const positionStyles: Record<string, React.CSSProperties> = {
       'top-left': { top: CAMERA_PIP_MARGIN, left: CAMERA_PIP_MARGIN },
@@ -114,13 +132,21 @@ export const CameraPipOverlay = forwardRef<CameraPipOverlayRef, CameraPipOverlay
       'bottom-right': { bottom: CAMERA_PIP_MARGIN, right: CAMERA_PIP_MARGIN },
     };
 
+    // Handle video metadata to get aspect ratio
+    const handleLoadedMetadata = () => {
+      const video = videoRef.current;
+      if (video && video.videoWidth && video.videoHeight) {
+        setVideoAspectRatio(video.videoWidth / video.videoHeight);
+      }
+    };
+
     return (
       <div
         className="absolute overflow-hidden shadow-2xl"
         style={{
           ...positionStyles[config.position],
-          width: size,
-          height: size,
+          width: pipWidth,
+          height: pipHeight,
           borderRadius: shapeStyles.borderRadius,
           border: '3px solid rgba(255,255,255,0.2)',
           zIndex: 100,
@@ -134,6 +160,7 @@ export const CameraPipOverlay = forwardRef<CameraPipOverlayRef, CameraPipOverlay
           preload="metadata"
           className="w-full h-full object-cover"
           style={{ transform: 'scaleX(-1)' }} // Mirror for natural look
+          onLoadedMetadata={handleLoadedMetadata}
           onError={() => {
             setHasError(true);
             onError?.('Failed to load camera video');

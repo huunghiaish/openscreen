@@ -144,8 +144,26 @@ export class CameraPipRenderer {
 
     // Calculate PiP size and position for export resolution
     const sizePercent = CAMERA_PIP_SIZE_PRESETS[size] / 100;
-    const pipSize = Math.round(canvasWidth * sizePercent);
+    const baseSize = Math.round(canvasWidth * sizePercent);
     const margin = Math.round(canvasWidth * 0.02); // 2% margin
+
+    // Calculate actual pip dimensions based on shape
+    const cameraAspectRatio = this.cameraCanvas.width / this.cameraCanvas.height;
+    let pipWidth = baseSize;
+    let pipHeight = baseSize;
+
+    if (!shapeParams.forceSquare && cameraAspectRatio !== 1) {
+      // Rectangle shape: maintain original camera aspect ratio
+      if (cameraAspectRatio > 1) {
+        // Landscape camera
+        pipWidth = baseSize;
+        pipHeight = Math.round(baseSize / cameraAspectRatio);
+      } else {
+        // Portrait camera
+        pipHeight = baseSize;
+        pipWidth = Math.round(baseSize * cameraAspectRatio);
+      }
+    }
 
     let x: number, y: number;
     switch (position) {
@@ -154,27 +172,28 @@ export class CameraPipRenderer {
         y = margin;
         break;
       case 'top-right':
-        x = canvasWidth - pipSize - margin;
+        x = canvasWidth - pipWidth - margin;
         y = margin;
         break;
       case 'bottom-left':
         x = margin;
-        y = canvasHeight - pipSize - margin;
+        y = canvasHeight - pipHeight - margin;
         break;
       case 'bottom-right':
       default:
-        x = canvasWidth - pipSize - margin;
-        y = canvasHeight - pipSize - margin;
+        x = canvasWidth - pipWidth - margin;
+        y = canvasHeight - pipHeight - margin;
         break;
     }
 
     // Draw camera PiP with shape-based styling
     ctx.save();
 
-    // Create clip path based on shape radius
+    // Create clip path based on shape radius (use smaller dimension for consistent rounding)
     ctx.beginPath();
-    const radius = (pipSize * shapeParams.radius) / 100;
-    ctx.roundRect(x, y, pipSize, pipSize, radius);
+    const radiusBasis = Math.min(pipWidth, pipHeight);
+    const radius = (radiusBasis * shapeParams.radius) / 100;
+    ctx.roundRect(x, y, pipWidth, pipHeight, radius);
     ctx.clip();
 
     // Calculate source rectangle for center-crop when forceSquare is true
@@ -189,9 +208,9 @@ export class CameraPipRenderer {
     }
 
     // Draw camera (mirrored horizontally for natural look)
-    ctx.translate(x + pipSize, y);
+    ctx.translate(x + pipWidth, y);
     ctx.scale(-1, 1);
-    ctx.drawImage(this.cameraCanvas, srcX, srcY, srcW, srcH, 0, 0, pipSize, pipSize);
+    ctx.drawImage(this.cameraCanvas, srcX, srcY, srcW, srcH, 0, 0, pipWidth, pipHeight);
 
     ctx.restore();
 
@@ -200,7 +219,7 @@ export class CameraPipRenderer {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.roundRect(x, y, pipSize, pipSize, radius);
+    ctx.roundRect(x, y, pipWidth, pipHeight, radius);
     ctx.stroke();
     ctx.restore();
   }
