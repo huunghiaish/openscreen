@@ -15,6 +15,13 @@ export default function App() {
       document.body.style.background = 'transparent';
       document.documentElement.style.background = 'transparent';
       document.getElementById('root')?.style.setProperty('background', 'transparent');
+      // Ensure full window height is used for HUD
+      if (type === 'hud-overlay') {
+        document.documentElement.style.height = '100%';
+        document.body.style.height = '100%';
+        document.getElementById('root')?.style.setProperty('height', '100%');
+        document.body.style.overflow = 'visible';
+      }
     }
   }, []);
 

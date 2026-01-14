@@ -2,7 +2,6 @@
  * Shared audio capture utilities for microphone and system audio.
  * Provides common functions for audio stream setup, level metering, and cleanup.
  */
-import { supportsSystemAudio } from '@/lib/platform-utils';
 import { AUDIO_FFT_SIZE, calculateAudioLevel } from '@/lib/recording-constants';
 
 /** System audio bitrate: 192 kbps for higher quality desktop audio */
@@ -18,10 +17,16 @@ export interface AudioCaptureResources {
  * Setup audio level metering for a media stream.
  * Returns resources that must be cleaned up when done.
  */
-export function setupAudioLevelMeter(
+export async function setupAudioLevelMeter(
   stream: MediaStream
-): AudioCaptureResources {
+): Promise<AudioCaptureResources> {
   const audioContext = new AudioContext();
+
+  // Resume AudioContext if suspended (browser security policy)
+  if (audioContext.state === 'suspended') {
+    await audioContext.resume();
+  }
+
   const source = audioContext.createMediaStreamSource(stream);
   const analyser = audioContext.createAnalyser();
   analyser.fftSize = AUDIO_FFT_SIZE;
@@ -72,14 +77,11 @@ export async function captureSystemAudio(
     return null;
   }
 
-  if (!supportsSystemAudio()) {
-    console.warn('System audio not supported on this platform');
-    return null;
-  }
-
   let dummyMediaStream: MediaStream | null = null;
 
   try {
+    console.log('Capturing system audio for source:', screenSourceId);
+
     // Request desktop capture WITH audio flag (macOS 13.2+ ScreenCaptureKit)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dummyMediaStream = await (navigator.mediaDevices as any).getUserMedia({
@@ -100,8 +102,12 @@ export async function captureSystemAudio(
       },
     });
 
+    console.log('Got desktop stream:', dummyMediaStream);
+
     // Extract audio track from the combined stream
     const audioTracks = dummyMediaStream?.getAudioTracks() ?? [];
+    console.log('Audio tracks:', audioTracks.length, audioTracks);
+
     if (audioTracks.length === 0) {
       console.warn('No system audio track available');
       return null;
@@ -109,6 +115,7 @@ export async function captureSystemAudio(
 
     // Create audio-only stream
     const audioOnlyStream = new MediaStream(audioTracks);
+    console.log('Created audio-only stream:', audioOnlyStream);
 
     // Stop the dummy video track we don't need
     dummyMediaStream?.getVideoTracks().forEach((t) => t.stop());

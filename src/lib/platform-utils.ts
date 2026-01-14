@@ -33,14 +33,19 @@ export function getMacOSVersion(): MacOSVersion | null {
 /**
  * Check if current platform supports system audio capture.
  * Requires macOS 13.2+ (Ventura) for ScreenCaptureKit audio.
+ * In Electron, assume macOS supports it if version detection fails (modern macOS).
  */
 export function supportsSystemAudio(): boolean {
-  const version = getMacOSVersion();
-  if (!version) return false;
-
-  // macOS 13.2+ required for ScreenCaptureKit system audio
-  if (version.major > 13) return true;
-  if (version.major === 13 && version.minor >= 2) return true;
+  // If running in Electron on macOS, assume supported (most users have modern macOS)
+  if (isMacOS()) {
+    const version = getMacOSVersion();
+    // If version can't be determined in Electron, assume modern macOS
+    if (!version) return true;
+    // macOS 13.2+ required for ScreenCaptureKit system audio
+    if (version.major > 13) return true;
+    if (version.major === 13 && version.minor >= 2) return true;
+    return false;
+  }
   return false;
 }
 
