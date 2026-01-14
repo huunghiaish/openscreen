@@ -1,207 +1,135 @@
-import { useState, useEffect, useRef } from "react";
-import styles from "./LaunchWindow.module.css";
-import { useScreenRecorder } from "../../hooks/useScreenRecorder";
-import { useMediaDevices } from "../../hooks/use-media-devices";
-import { Button } from "../ui/button";
-import { BsRecordCircle } from "react-icons/bs";
-import { FaRegStopCircle } from "react-icons/fa";
-import { MdMonitor } from "react-icons/md";
-import { RxDragHandleDots2 } from "react-icons/rx";
-import { FaFolderMinus } from "react-icons/fa6";
-import { FiMinus, FiX } from "react-icons/fi";
-import { BsCameraVideo, BsCameraVideoOff, BsEye, BsEyeSlash } from "react-icons/bs";
-import { ContentClamp } from "../ui/content-clamp";
+/**
+ * HUD overlay launch window with recording controls and device selectors.
+ * Floating controls for screen capture, camera, mic, and system audio.
+ */
+import { useState, useEffect } from 'react';
+import styles from './LaunchWindow.module.css';
+import { useScreenRecorder } from '@/hooks/useScreenRecorder';
+import { useMediaDevices } from '@/hooks/use-media-devices';
+import { useMicrophoneCapture } from '@/hooks/use-microphone-capture';
+import { useCameraOverlay } from '@/hooks/use-camera-overlay';
+import { useRecordingTimer } from '@/hooks/use-recording-timer';
+import { useSelectedSource } from '@/hooks/use-selected-source';
+import { Button } from '@/components/ui/button';
+import { BsRecordCircle, BsEye, BsEyeSlash } from 'react-icons/bs';
+import { FaRegStopCircle } from 'react-icons/fa';
+import { MdMonitor } from 'react-icons/md';
+import { RxDragHandleDots2 } from 'react-icons/rx';
+import { FaFolderMinus } from 'react-icons/fa6';
+import { FiMinus, FiX } from 'react-icons/fi';
+import { ContentClamp } from '@/components/ui/content-clamp';
+import { CameraSettingsDropdown } from './camera-settings-dropdown';
+import { MicSettingsDropdown } from './mic-settings-dropdown';
+import { SystemAudioToggle } from './system-audio-toggle';
+import type { CameraPosition, CameraSize } from '@/types/media-devices';
 
 export function LaunchWindow() {
+  // Device management
   const {
     cameras,
+    microphones,
     selectedCameraId,
+    selectedMicId,
+    systemAudioEnabled,
     setSelectedCameraId,
+    setSelectedMicId,
+    setSystemAudioEnabled,
     requestPermissions,
     permissionStatus,
+    systemAudioSupported,
   } = useMediaDevices();
 
-  const [cameraEnabled, setCameraEnabled] = useState(false);
-  const [cameraPreviewEnabled, setCameraPreviewEnabled] = useState(true);
-  const activeCameraId = cameraEnabled ? selectedCameraId : null;
-  const prevRecordingRef = useRef(false);
+  // Microphone capture for audio level metering
+  const {
+    audioLevel: micAudioLevel,
+    startCapture: startMicCapture,
+    stopCapture: stopMicCapture,
+  } = useMicrophoneCapture();
 
+  // Source selection
+  const { sourceName, hasSelectedSource, openSourceSelector } = useSelectedSource();
+
+  // Camera settings state (defaults from plan: bottom-right, medium)
+  const [cameraPosition, setCameraPosition] = useState<CameraPosition>('bottom-right');
+  const [cameraSize, setCameraSize] = useState<CameraSize>('medium');
+  const [cameraPreviewEnabled, setCameraPreviewEnabled] = useState(true);
+
+  const cameraEnabled = selectedCameraId !== null;
+
+  // Screen recording
   const { recording, toggleRecording } = useScreenRecorder({
-    cameraDeviceId: activeCameraId,
+    cameraDeviceId: cameraEnabled ? selectedCameraId : null,
   });
 
-  const [recordingStart, setRecordingStart] = useState<number | null>(null);
-  const [elapsed, setElapsed] = useState(0);
+  // Recording timer
+  const { formattedTime } = useRecordingTimer(recording);
 
-  // Show/hide camera overlay window based on recording or preview state
+  // Camera overlay management
+  useCameraOverlay({
+    recording,
+    cameraEnabled,
+    cameraDeviceId: selectedCameraId,
+    previewEnabled: cameraPreviewEnabled,
+  });
+
+  // Start/stop mic capture when mic selection changes
   useEffect(() => {
-    const wasRecording = prevRecordingRef.current;
-    prevRecordingRef.current = recording;
-
-    const api = window.electronAPI as typeof window.electronAPI & {
-      showCameraOverlay?: (deviceId: string) => Promise<void>;
-      hideCameraOverlay?: () => Promise<void>;
-    };
-
-    if (recording && !wasRecording && cameraEnabled && activeCameraId && cameraPreviewEnabled) {
-      // Recording just started with camera enabled and preview on - show overlay
-      api.showCameraOverlay?.(activeCameraId);
-    } else if (!recording && wasRecording) {
-      // Recording just stopped - always hide overlay
-      api.hideCameraOverlay?.();
-    }
-  }, [recording, cameraEnabled, activeCameraId, cameraPreviewEnabled]);
-
-  // Show/hide camera overlay when preview mode changes (only when not recording)
-  const prevCameraPreviewRef = useRef(cameraPreviewEnabled);
-  useEffect(() => {
-    const wasPreviewEnabled = prevCameraPreviewRef.current;
-    prevCameraPreviewRef.current = cameraPreviewEnabled;
-
-    // Only respond to preview toggle changes, not recording state changes
-    if (wasPreviewEnabled === cameraPreviewEnabled) return;
-    if (recording) return;
-
-    const api = window.electronAPI as typeof window.electronAPI & {
-      showCameraOverlay?: (deviceId: string) => Promise<void>;
-      hideCameraOverlay?: () => Promise<void>;
-    };
-
-    if (cameraPreviewEnabled && cameraEnabled && activeCameraId) {
-      api.showCameraOverlay?.(activeCameraId);
-    } else if (!cameraPreviewEnabled) {
-      api.hideCameraOverlay?.();
-    }
-  }, [cameraPreviewEnabled, cameraEnabled, activeCameraId, recording]);
-
-  // Show camera overlay when camera is first enabled with preview ON
-  const prevCameraEnabledRef = useRef(cameraEnabled);
-  useEffect(() => {
-    const wasCameraEnabled = prevCameraEnabledRef.current;
-    prevCameraEnabledRef.current = cameraEnabled;
-
-    // Only respond to camera enable, not disable
-    if (wasCameraEnabled || !cameraEnabled) return;
-    if (recording) return;
-
-    const api = window.electronAPI as typeof window.electronAPI & {
-      showCameraOverlay?: (deviceId: string) => Promise<void>;
-      hideCameraOverlay?: () => Promise<void>;
-    };
-
-    if (cameraPreviewEnabled && activeCameraId) {
-      api.showCameraOverlay?.(activeCameraId);
-    }
-  }, [cameraEnabled, cameraPreviewEnabled, activeCameraId, recording]);
-
-  useEffect(() => {
-    let timer: NodeJS.Timeout | null = null;
-    if (recording) {
-      if (!recordingStart) setRecordingStart(Date.now());
-      timer = setInterval(() => {
-        if (recordingStart) {
-          setElapsed(Math.floor((Date.now() - recordingStart) / 1000));
-        }
-      }, 1000);
+    if (selectedMicId) {
+      startMicCapture(selectedMicId);
     } else {
-      setRecordingStart(null);
-      setElapsed(0);
-      if (timer) clearInterval(timer);
+      stopMicCapture();
     }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [recording, recordingStart]);
+  }, [selectedMicId, startMicCapture, stopMicCapture]);
 
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-    const s = (seconds % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
-  };
-  const [selectedSource, setSelectedSource] = useState("Screen");
-  const [hasSelectedSource, setHasSelectedSource] = useState(false);
-
-  useEffect(() => {
-    const checkSelectedSource = async () => {
-      if (window.electronAPI) {
-        const source = await window.electronAPI.getSelectedSource();
-        if (source) {
-          setSelectedSource(source.name);
-          setHasSelectedSource(true);
-        } else {
-          setSelectedSource("Screen");
-          setHasSelectedSource(false);
-        }
-      }
-    };
-
-    checkSelectedSource();
-    
-    const interval = setInterval(checkSelectedSource, 500);
-    return () => clearInterval(interval);
-  }, []);
-
-  const openSourceSelector = () => {
-    if (window.electronAPI) {
-      window.electronAPI.openSourceSelector();
+  // Handle camera selection with permission request
+  const handleCameraSelect = async (deviceId: string | null) => {
+    if (deviceId !== null && permissionStatus !== 'granted') {
+      const granted = await requestPermissions();
+      if (!granted) return;
+    }
+    setSelectedCameraId(deviceId);
+    if (deviceId !== null) {
+      setCameraPreviewEnabled(true);
     }
   };
 
-  const openVideoFile = async () => {
-    const result = await window.electronAPI.openVideoFilePicker();
-    
-    if (result.cancelled) {
-      return;
+  // Handle mic selection with permission request
+  const handleMicSelect = async (deviceId: string | null) => {
+    if (deviceId !== null && permissionStatus !== 'granted') {
+      const granted = await requestPermissions();
+      if (!granted) return;
     }
-    
-    if (result.success && result.path) {
-      await window.electronAPI.setCurrentVideoPath(result.path);
-      await window.electronAPI.switchToEditor();
-    }
+    setSelectedMicId(deviceId);
   };
 
-  // IPC events for hide/close
-  const sendHudOverlayHide = () => {
-    if (window.electronAPI && window.electronAPI.hudOverlayHide) {
-      window.electronAPI.hudOverlayHide();
-    }
-  };
-  const sendHudOverlayClose = () => {
-    if (window.electronAPI && window.electronAPI.hudOverlayClose) {
-      window.electronAPI.hudOverlayClose();
-    }
-  };
-
-  // Toggle camera on/off
-  const toggleCamera = async () => {
-    if (!cameraEnabled) {
-      // Enable camera
-      if (permissionStatus !== 'granted') {
-        const granted = await requestPermissions();
-        if (!granted) return;
-      }
-      // Auto-select first camera if none selected
-      if (!selectedCameraId && cameras.length > 0) {
-        setSelectedCameraId(cameras[0].deviceId);
-      }
-      setCameraEnabled(true);
-      setCameraPreviewEnabled(true); // Enable preview when camera is enabled
-    } else {
-      setCameraEnabled(false);
-      setCameraPreviewEnabled(false); // Disable preview when camera is disabled
-    }
-  };
-
-  // Toggle camera preview on/off
+  // Toggle camera preview
   const toggleCameraPreview = () => {
     if (!cameraEnabled) return;
-    setCameraPreviewEnabled(!cameraPreviewEnabled);
+    setCameraPreviewEnabled((prev) => !prev);
   };
+
+  // Open video file
+  const openVideoFile = async () => {
+    if (!window.electronAPI?.openVideoFilePicker) return;
+    const result = await window.electronAPI.openVideoFilePicker();
+    if (result.cancelled || !result.success || !result.path) return;
+    await window.electronAPI.setCurrentVideoPath?.(result.path);
+    await window.electronAPI.switchToEditor?.();
+  };
+
+  // HUD window controls
+  const sendHudOverlayHide = () => window.electronAPI?.hudOverlayHide?.();
+  const sendHudOverlayClose = () => window.electronAPI?.hudOverlayClose?.();
+
+  // System audio unsupported message
+  const systemAudioUnsupportedMessage = systemAudioSupported
+    ? null
+    : 'Requires macOS 13.2+ for system audio capture';
 
   return (
     <div className="w-full h-full flex items-center bg-transparent">
       <div
-        className={`w-full max-w-[500px] mx-auto flex items-center justify-between px-4 py-2 ${styles.electronDrag}`}
+        className={`w-full max-w-[560px] mx-auto flex items-center justify-between px-4 py-2 ${styles.electronDrag}`}
         style={{
           borderRadius: 16,
           background: 'linear-gradient(135deg, rgba(30,30,40,0.92) 0%, rgba(20,20,30,0.85) 100%)',
@@ -212,110 +140,140 @@ export function LaunchWindow() {
           minHeight: 44,
         }}
       >
-        <div className={`flex items-center gap-1 ${styles.electronDrag}`}> <RxDragHandleDots2 size={18} className="text-white/40" /> </div>
+        {/* Drag handle */}
+        <div className={`flex items-center gap-1 ${styles.electronDrag}`}>
+          <RxDragHandleDots2 size={18} className="text-white/40" />
+        </div>
 
+        {/* Source selector */}
         <Button
           variant="link"
           size="sm"
           className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-left text-xs ${styles.electronNoDrag}`}
           onClick={openSourceSelector}
           disabled={recording}
+          aria-label="Select screen or window to record"
         >
           <MdMonitor size={14} className="text-white" />
-          <ContentClamp truncateLength={6}>{selectedSource}</ContentClamp>
+          <ContentClamp truncateLength={6}>{sourceName}</ContentClamp>
         </Button>
 
-        <div className="w-px h-6 bg-white/30" />
+        <div className="w-px h-6 bg-white/30" aria-hidden="true" />
 
-        {/* Camera toggle button */}
-        <Button
-          variant="link"
-          size="sm"
-          onClick={toggleCamera}
-          disabled={recording}
-          title={cameraEnabled ? "Disable camera" : "Enable camera"}
-          className={`gap-1 bg-transparent hover:bg-transparent px-2 text-xs ${styles.electronNoDrag}`}
-        >
-          {cameraEnabled ? (
-            <BsCameraVideo size={14} className="text-green-400" />
-          ) : (
-            <BsCameraVideoOff size={14} className="text-white/50" />
-          )}
-          <span className={cameraEnabled ? "text-green-400" : "text-white/50"}>Camera</span>
-        </Button>
-
-        {/* Camera preview toggle button */}
-        <Button
-          variant="link"
-          size="icon"
-          onClick={toggleCameraPreview}
-          disabled={recording || !cameraEnabled}
-          title={cameraPreviewEnabled ? "Hide camera preview" : "Show camera preview"}
-          className={`bg-transparent hover:bg-transparent px-1 ${styles.electronNoDrag}`}
-        >
-          {cameraPreviewEnabled ? (
-            <BsEye size={14} className="text-green-400" />
-          ) : (
-            <BsEyeSlash size={14} className={cameraEnabled ? "text-white/70" : "text-white/30"} />
-          )}
-        </Button>
-
-        <div className="w-px h-6 bg-white/30" />
-
+        {/* Record button */}
         <Button
           variant="link"
           size="sm"
           onClick={hasSelectedSource ? toggleRecording : openSourceSelector}
           disabled={!hasSelectedSource && !recording}
-          className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-center text-xs ${styles.electronNoDrag}`}
+          className={`gap-1 text-white bg-transparent hover:bg-transparent px-2 text-center text-xs ${styles.electronNoDrag}`}
+          aria-label={recording ? 'Stop recording' : 'Start recording'}
         >
           {recording ? (
             <>
               <FaRegStopCircle size={14} className="text-red-400" />
-              <span className="text-red-400">{formatTime(elapsed)}</span>
+              <span className="text-red-400">{formattedTime}</span>
             </>
           ) : (
             <>
-              <BsRecordCircle size={14} className={hasSelectedSource ? "text-white" : "text-white/50"} />
-              <span className={hasSelectedSource ? "text-white" : "text-white/50"}>Record</span>
+              <BsRecordCircle size={14} className={hasSelectedSource ? 'text-white' : 'text-white/50'} />
+              <span className={hasSelectedSource ? 'text-white' : 'text-white/50'}>Record</span>
             </>
           )}
         </Button>
-        
 
-        <div className="w-px h-6 bg-white/30" />
+        <div className="w-px h-6 bg-white/30" aria-hidden="true" />
 
+        {/* Device controls group */}
+        <div className={`flex items-center gap-1 ${styles.electronNoDrag}`} role="group" aria-label="Device controls">
+          {/* Camera dropdown */}
+          <CameraSettingsDropdown
+            cameras={cameras}
+            selectedCameraId={selectedCameraId}
+            onSelectCamera={handleCameraSelect}
+            position={cameraPosition}
+            onPositionChange={setCameraPosition}
+            size={cameraSize}
+            onSizeChange={setCameraSize}
+            disabled={recording}
+          />
 
+          {/* Camera preview toggle */}
+          <Button
+            variant="link"
+            size="icon"
+            onClick={toggleCameraPreview}
+            disabled={recording || !cameraEnabled}
+            title={cameraPreviewEnabled ? 'Hide camera preview' : 'Show camera preview'}
+            className="bg-transparent hover:bg-transparent px-1"
+            style={{ opacity: cameraEnabled ? 1 : 0.5 }}
+            aria-label={cameraPreviewEnabled ? 'Hide camera preview' : 'Show camera preview'}
+            aria-pressed={cameraPreviewEnabled}
+          >
+            {cameraPreviewEnabled && cameraEnabled ? (
+              <BsEye size={14} className="text-green-400" />
+            ) : (
+              <BsEyeSlash size={14} className="text-white/50" />
+            )}
+          </Button>
+
+          {/* Mic dropdown */}
+          <MicSettingsDropdown
+            microphones={microphones}
+            selectedMicId={selectedMicId}
+            onSelectMic={handleMicSelect}
+            audioLevel={micAudioLevel}
+            disabled={recording}
+          />
+
+          {/* System audio toggle */}
+          <SystemAudioToggle
+            enabled={systemAudioEnabled}
+            onToggle={() => setSystemAudioEnabled(!systemAudioEnabled)}
+            supported={systemAudioSupported}
+            unsupportedMessage={systemAudioUnsupportedMessage}
+            disabled={recording}
+          />
+        </div>
+
+        <div className="w-px h-6 bg-white/30" aria-hidden="true" />
+
+        {/* Open video file button */}
         <Button
           variant="link"
           size="sm"
           onClick={openVideoFile}
           className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-right text-xs ${styles.electronNoDrag} ${styles.folderButton}`}
           disabled={recording}
+          aria-label="Open video file"
         >
           <FaFolderMinus size={14} className="text-white" />
           <span className={styles.folderText}>Open</span>
         </Button>
 
-         {/* Separator before hide/close buttons */}
-        <div className="w-px h-6 bg-white/30 mx-2" />
+        {/* Separator before hide/close buttons */}
+        <div className="w-px h-6 bg-white/30 mx-2" aria-hidden="true" />
+
+        {/* Hide HUD button */}
         <Button
           variant="link"
           size="icon"
           className={`ml-2 ${styles.electronNoDrag} hudOverlayButton`}
           title="Hide HUD"
           onClick={sendHudOverlayHide}
+          aria-label="Hide HUD overlay"
         >
           <FiMinus size={18} style={{ color: '#fff', opacity: 0.7 }} />
-          
         </Button>
 
+        {/* Close app button */}
         <Button
           variant="link"
           size="icon"
           className={`ml-1 ${styles.electronNoDrag} hudOverlayButton`}
           title="Close App"
           onClick={sendHudOverlayClose}
+          aria-label="Close application"
         >
           <FiX size={18} style={{ color: '#fff', opacity: 0.7 }} />
         </Button>
