@@ -80,6 +80,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storeAudioRecording: (audioData: ArrayBuffer, fileName: string) => {
     return ipcRenderer.invoke('store-audio-recording', audioData, fileName)
   },
+  storeSystemAudioRecording: (audioData: ArrayBuffer, fileName: string) => {
+    return ipcRenderer.invoke('store-system-audio-recording', audioData, fileName)
+  },
   showCameraOverlay: (deviceId: string) => {
     return ipcRenderer.invoke('show-camera-overlay', deviceId)
   },

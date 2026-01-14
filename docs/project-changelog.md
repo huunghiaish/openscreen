@@ -4,6 +4,79 @@ All notable changes to OpenScreen are documented in this file. The project follo
 
 ## [Unreleased]
 
+### Phase 04: System Audio Capture (Completed)
+
+#### Added
+- **System Audio Capture Module** (`src/lib/audio-capture-utils.ts`, 169 lines)
+  - `captureSystemAudio()`: Extracts audio from ScreenCaptureKit desktop capture (macOS 13.2+)
+  - `setupAudioLevelMeter()`: Creates Web Audio API analyser for real-time audio metering
+  - `getAudioLevel()`: FFT-based audio level calculation (0-100 scale) from analyser
+  - `cleanupAudioResources()`: Safe resource cleanup for AudioContext and MediaStream tracks
+  - `stopMediaRecorderSafely()`: Timeout-protected MediaRecorder stop with race condition handling
+  - Bitrate constant: `SYSTEM_AUDIO_BITRATE = 192 kbps` for high quality desktop audio
+
+- **useSystemAudioCapture Hook** (`src/hooks/use-system-audio-capture.ts`, 186 lines)
+  - `startCapture(screenSourceId)`: Initialize desktop audio capture from screen source
+  - `startRecording()`: Begin recording system audio to WAV/WebM blob
+  - `stopRecording()`: Stop recording with timeout protection, return audio blob
+  - Platform detection: Returns unsupported message for non-macOS systems
+  - Real-time audio level metering (0-100) for VU meter display
+  - Automatic resource cleanup: AudioContext, MediaStream tracks, animation frames
+  - Error handling: Graceful fallback for devices without audio track
+
+#### Updated
+- **IPC Handler** (`electron/ipc/handlers.ts`):
+  - New `store-system-audio-recording` handler for secure system audio file storage
+  - Filename validation: Pattern `(recording|camera|mic|system-audio)-\\d{13,14}\\.[a-z0-9]+`
+  - File size limit: 100MB max for system audio recordings
+  - Path traversal protection: Validates path within RECORDINGS_DIR
+  - Descriptive error handling for debugging
+
+#### Technical Details
+
+**System Audio Capture Process**:
+1. Request desktop capture WITH audio flag (ScreenCaptureKit API)
+2. Request minimal video (1x1px) to satisfy API requirement
+3. Extract audio track from combined stream
+4. Create audio-only MediaStream from extracted tracks
+5. Stop dummy video track immediately
+6. Setup Web Audio API analyser for level metering
+7. Create MediaRecorder at 192 kbps bitrate
+8. Record audio in 1-second chunks
+9. On stop: collect chunks into Blob with timeout protection
+
+**Recording Storage**:
+- File naming: `system-audio-{timestamp}.webm`
+- Location: `RECORDINGS_DIR/` (same as other recordings)
+- Maximum size: 100MB
+- Codec: WebM audio (WAV fallback if WebM unavailable)
+
+**Platform Support**:
+- macOS 13.2+ (Ventura with ScreenCaptureKit): Supported
+- macOS < 13.2: Not supported
+- Windows/Linux: Not supported
+- User receives clear message explaining lack of support
+
+**Error Handling**:
+- No system audio track available: Returns null, shows error message
+- API not supported: Returns null, shows version requirement message
+- Capture fails: Logs warning, gracefully stops recording
+- MediaRecorder hang: Timeout protection (5 seconds) prevents promise hanging
+
+**Security Implementation**:
+- Path validation in IPC handler prevents directory traversal
+- Filename validation ensures only valid audio files stored
+- File size limits prevent disk space exhaustion
+- No secrets or tokens stored with audio data
+
+#### Verified Components
+- captureSystemAudio() properly handles ScreenCaptureKit API
+- Audio-only stream created successfully from desktop capture
+- setupAudioLevelMeter() initializes Web Audio API correctly
+- stopMediaRecorderSafely() prevents race condition hangs
+- Platform detection returns correct values for all macOS versions
+- IPC handler validates all incoming audio data
+
 ### Phase 07: Camera PiP Shape Selection (Completed)
 
 #### Added

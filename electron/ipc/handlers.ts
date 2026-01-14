@@ -14,10 +14,11 @@ interface DesktopSource {
 
 let selectedSource: DesktopSource | null = null
 
-// Max file sizes: 5GB video, 500MB camera, 100MB audio
+// Max file sizes: 5GB video, 500MB camera, 100MB audio, 100MB system audio
 const MAX_VIDEO_SIZE = 5 * 1024 * 1024 * 1024;
 const MAX_CAMERA_SIZE = 500 * 1024 * 1024;
 const MAX_AUDIO_SIZE = 100 * 1024 * 1024;
+const MAX_SYSTEM_AUDIO_SIZE = 100 * 1024 * 1024;
 
 /**
  * Validate and sanitize recording filename to prevent path traversal.
@@ -28,8 +29,8 @@ function validateRecordingFileName(fileName: string, allowedExtensions: string[]
   const baseName = path.basename(fileName);
 
   // Strict pattern: prefix-timestamp.extension (timestamp is 13-digit Unix ms)
-  // Allowed prefixes: recording, camera, mic
-  const validPattern = /^(recording|camera|mic)-\d{13,14}\.[a-z0-9]+$/;
+  // Allowed prefixes: recording, camera, mic, system-audio
+  const validPattern = /^(recording|camera|mic|system-audio)-\d{13,14}\.[a-z0-9]+$/;
   if (!validPattern.test(baseName)) {
     return null;
   }
@@ -345,6 +346,22 @@ export function registerIpcHandlers(
       );
     } catch (error) {
       console.error('Failed to store audio recording:', error);
+      return { success: false, error: String(error) };
+    }
+  });
+
+  // Store system audio recording as separate file (macOS 13.2+ ScreenCaptureKit)
+  ipcMain.handle('store-system-audio-recording', async (_, audioData: ArrayBuffer, fileName: string) => {
+    try {
+      return await safeWriteRecording(
+        RECORDINGS_DIR,
+        fileName,
+        audioData,
+        MAX_SYSTEM_AUDIO_SIZE,
+        ['webm']
+      );
+    } catch (error) {
+      console.error('Failed to store system audio recording:', error);
       return { success: false, error: String(error) };
     }
   });

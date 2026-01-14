@@ -117,7 +117,7 @@ return <VideoEditor />; // default
    │  ├─ Persists selection to localStorage
    │  └─ Validates device IDs on selection
    │
-   ├─ User selects camera and microphone
+   ├─ User selects camera, microphone, and system audio preference
    │
    ├─ Source Selector Window
    │  ├─ Queries main process for available screens/windows
@@ -125,25 +125,42 @@ return <VideoEditor />; // default
    │  │
    │  └─ Click Record
    │     ├─ Emit 'START_CAPTURE' IPC to main
-   │     │  └─ Payload includes optional cameraDeviceId
+   │     │  └─ Payload includes optional cameraDeviceId and systemAudioEnabled flag
    │     │
    │     ├─ Main process initializes capture
    │     │  ├─ Start screen capture
    │     │  ├─ If cameraDeviceId: Start camera capture (separate MediaStream)
-   │     │  └─ Begin audio streams (mic, system audio, camera audio)
+   │     │  ├─ Begin microphone audio stream (if enabled)
+   │     │  └─ Begin system audio capture (if enabled and macOS 13.2+)
+   │     │     └─ Extract audio from ScreenCaptureKit desktop capture
    │     │
-   │     ├─ Recording frames flow via IPC
-   │     │  ├─ Screen frame data → /tmp/screen.webm
-   │     │  └─ Camera frame data → /tmp/camera.webm (if camera enabled)
+   │     ├─ Recording flows via IPC
+   │     │  ├─ Screen frame data → RECORDINGS_DIR/recording-{timestamp}.webm
+   │     │  ├─ Camera frame data → RECORDINGS_DIR/camera-{timestamp}.webm (if camera enabled)
+   │     │  ├─ Microphone audio → RECORDINGS_DIR/mic-{timestamp}.webm (if mic enabled)
+   │     │  └─ System audio → RECORDINGS_DIR/system-audio-{timestamp}.webm (if system audio enabled)
+   │     │
+   │     ├─ useSystemAudioCapture Hook (if system audio enabled)
+   │     │  ├─ captureSystemAudio() extracts audio from ScreenCaptureKit
+   │     │  ├─ setupAudioLevelMeter() for VU meter display
+   │     │  ├─ startRecording() captures audio at 192 kbps
+   │     │  └─ Runs in parallel with screen recording
    │     │
    │     ├─ Camera preview overlay shown (optional)
    │     │  └─ useScreenRecorder with cameraDeviceId displays live camera feed
    │     │
    │     └─ User clicks Stop → 'STOP_CAPTURE' IPC
+   │        ├─ Screen recording stops
+   │        ├─ Camera recording stops (if enabled)
+   │        ├─ Microphone audio stops (if enabled)
+   │        │  └─ Emit 'store-audio-recording' IPC with mic audio blob
+   │        ├─ System audio stops (if enabled)
+   │        │  └─ Emit 'store-system-audio-recording' IPC with system audio blob
+   │        └─ All files saved to RECORDINGS_DIR
    │
    └─ Editor Window Opens
       ├─ Video data loaded from file
-      ├─ Audio tracks loaded (camera audio, system audio, mic)
+      ├─ Audio tracks loaded (camera audio, system audio, microphone)
       ├─ Camera video track loaded (if camera was recorded)
       │  └─ Accessible in timeline for editing
       └─ Timeline shows all tracks (screen + camera + audio)
@@ -358,6 +375,65 @@ useMediaDevices Hook
       └─ Warns if device not found
 ```
 
+### System Audio Capture (macOS 13.2+)
+
+```
+useSystemAudioCapture Hook
+│
+├─ Platform Detection (on mount)
+│  ├─ supportsSystemAudio() checks macOS version >= 13.2
+│  └─ getSystemAudioSupportMessage() provides fallback message
+│
+├─ startCapture(screenSourceId)
+│  │
+│  ├─ Call captureSystemAudio() from audio-capture-utils
+│  │  │
+│  │  ├─ Request desktop capture WITH audio flag (ScreenCaptureKit)
+│  │  │  └─ Minimal 1x1px video requested (only need audio)
+│  │  ├─ Extract audio track from combined stream
+│  │  └─ Stop dummy video track, return audio-only stream
+│  │
+│  ├─ Setup audio level metering (Web Audio API)
+│  │  ├─ Create AudioContext
+│  │  ├─ Create AnalyserNode with fftSize=2048
+│  │  └─ Connect stream → analyser
+│  │
+│  └─ Start updateAudioLevel() animation frame loop
+│
+├─ startRecording()
+│  ├─ Create MediaRecorder from audio stream
+│  ├─ Set bitrate: 192 kbps for high quality
+│  └─ Begin recording with 1 second data chunks
+│
+├─ stopRecording() (timeout-protected)
+│  ├─ Stop MediaRecorder with 5 second timeout
+│  ├─ Collect chunks into Blob
+│  └─ Return audio blob for IPC storage
+│
+└─ stopCapture()
+   ├─ Cancel animation frame loop
+   ├─ Close AudioContext
+   ├─ Stop all media tracks
+   └─ Reset state
+
+Audio Capture Utils Shared Module (src/lib/audio-capture-utils.ts)
+│
+├─ captureSystemAudio(screenSourceId)
+│  └─ Extract audio from ScreenCaptureKit desktop capture
+│
+├─ setupAudioLevelMeter(stream)
+│  └─ Create Web Audio API analyser for real-time metering
+│
+├─ getAudioLevel(analyser)
+│  └─ Calculate FFT-based level (0-100 scale)
+│
+├─ cleanupAudioResources(resources)
+│  └─ Safe cleanup of AudioContext and MediaStream
+│
+└─ stopMediaRecorderSafely(recorder, chunks, mimeType)
+   └─ Stop with timeout protection (5 second default)
+```
+
 ### Platform Detection
 
 ```
@@ -372,6 +448,12 @@ supportsSystemAudio()
       ├─ macOS 14.x+ → true (system audio supported)
       ├─ macOS 13.2+ → true (Ventura with ScreenCaptureKit)
       └─ Earlier versions → false
+
+getSystemAudioSupportMessage()
+│
+└─ Returns user-friendly message
+   ├─ macOS < 13.2: "macOS Ventura (13.2+) required for system audio"
+   └─ Non-macOS: "System audio capture only supported on macOS"
 ```
 
 ## Storage Architecture
@@ -459,6 +541,24 @@ Main → Client: { type: 'CAPTURE_FRAME', payload: ArrayBuffer }
 Main → Client: { type: 'CAPTURE_STATUS', payload: { frame, timestamp } }
 Client → Main: { type: 'STOP_CAPTURE' }
 Main → Client: { type: 'CAPTURE_END', payload: { filepath, duration } }
+```
+
+### Audio Recording Storage
+
+```
+Microphone Audio:
+Client → Main: { type: 'store-audio-recording', payload: { audioData: ArrayBuffer, fileName: string } }
+Main → Client: { type: 'store-audio-recording-result', payload: { success: boolean, path: string } }
+
+System Audio (macOS 13.2+ only):
+Client → Main: { type: 'store-system-audio-recording', payload: { audioData: ArrayBuffer, fileName: string } }
+Main → Client: { type: 'store-system-audio-recording-result', payload: { success: boolean, path: string } }
+
+Security Measures:
+- Path validation: Resolved path must be within RECORDINGS_DIR
+- Filename validation: Pattern `(mic|system-audio)-\\d{13,14}\\.[a-z0-9]+`
+- File size limits: 100MB max for each audio file
+- Directory traversal protection with path.startsWith() check
 ```
 
 ### Camera Recording Storage

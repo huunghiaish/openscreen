@@ -18,7 +18,7 @@ describe('platform-utils', () => {
       });
 
       const version = getMacOSVersion();
-      expect(version).toEqual({ major: 14, minor: 2 });
+      expect(version).toEqual({ major: 14, minor: 2, patch: 0, raw: 'Mac OS X 14_2' });
     });
 
     it('returns version for macOS user agent with dot format', () => {
@@ -27,7 +27,7 @@ describe('platform-utils', () => {
       });
 
       const version = getMacOSVersion();
-      expect(version).toEqual({ major: 13, minor: 2 });
+      expect(version).toEqual({ major: 13, minor: 2, patch: 0, raw: 'Mac OS X 13.2' });
     });
 
     it('returns null for Windows user agent', () => {

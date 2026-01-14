@@ -6,6 +6,16 @@
 /** Permission status for media device access */
 export type PermissionStatus = 'granted' | 'denied' | 'prompt' | 'unknown';
 
+/** State for system audio capture feature */
+export interface SystemAudioState {
+  /** Whether system audio capture is supported on this platform */
+  supported: boolean;
+  /** Whether user has enabled system audio capture */
+  enabled: boolean;
+  /** Message explaining why system audio is unavailable, or null if available */
+  unsupportedMessage: string | null;
+}
+
 /** State shape for media device tracking */
 export interface MediaDeviceState {
   cameras: MediaDeviceInfo[];
