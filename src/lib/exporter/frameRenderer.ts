@@ -6,6 +6,8 @@ import { applyZoomTransform } from '@/components/video-editor/videoPlayback/zoom
 import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA } from '@/components/video-editor/videoPlayback/constants';
 import { clampFocusToStage as clampFocusToStageUtil } from '@/components/video-editor/videoPlayback/focusUtils';
 import { renderAnnotations } from './annotationRenderer';
+import { CameraPipRenderer } from './camera-pip-renderer';
+import type { CameraExportConfig } from './types';
 
 interface FrameRenderConfig {
   width: number;
@@ -24,6 +26,7 @@ interface FrameRenderConfig {
   annotationRegions?: AnnotationRegion[];
   previewWidth?: number;
   previewHeight?: number;
+  cameraExport?: CameraExportConfig;
 }
 
 interface AnimationState {
@@ -58,6 +61,8 @@ export class FrameRenderer {
   private animationState: AnimationState;
   private layoutCache: LayoutInfo | null = null;
   private currentVideoTime = 0;
+  // Camera PiP renderer (extracted to separate module)
+  private cameraPipRenderer: CameraPipRenderer | null = null;
 
   constructor(config: FrameRenderConfig) {
     this.config = config;
@@ -138,6 +143,12 @@ export class FrameRenderer {
     this.maskGraphics = new Graphics();
     this.videoContainer.addChild(this.maskGraphics);
     this.videoContainer.mask = this.maskGraphics;
+
+    // Initialize camera PiP renderer if config provided
+    if (this.config.cameraExport?.videoUrl) {
+      this.cameraPipRenderer = new CameraPipRenderer(this.config.cameraExport);
+      await this.cameraPipRenderer.initialize();
+    }
   }
 
   private async setupBackground(): Promise<void> {
@@ -326,6 +337,16 @@ export class FrameRenderer {
         this.config.height,
         timeMs,
         scaleFactor
+      );
+    }
+
+    // Render camera PiP on top of everything (using extracted renderer)
+    if (this.cameraPipRenderer && this.compositeCtx) {
+      await this.cameraPipRenderer.render(
+        this.compositeCtx,
+        this.config.width,
+        this.config.height,
+        timeMs
       );
     }
   }
@@ -518,7 +539,6 @@ export class FrameRenderer {
     return this.compositeCanvas;
   }
 
-
   destroy(): void {
     if (this.videoSprite) {
       this.videoSprite.destroy();
@@ -537,5 +557,10 @@ export class FrameRenderer {
     this.shadowCtx = null;
     this.compositeCanvas = null;
     this.compositeCtx = null;
+    // Clean up camera PiP renderer
+    if (this.cameraPipRenderer) {
+      this.cameraPipRenderer.destroy();
+      this.cameraPipRenderer = null;
+    }
   }
 }

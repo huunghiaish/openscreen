@@ -572,6 +572,9 @@ export default function VideoEditor() {
           onProgress: (progress: ExportProgress) => {
             setExportProgress(progress);
           },
+          // Camera PiP config
+          cameraVideoUrl: cameraVideoPath || undefined,
+          cameraPipConfig,
         });
 
         exporterRef.current = gifExporter as unknown as VideoExporter;
@@ -697,6 +700,9 @@ export default function VideoEditor() {
           onProgress: (progress: ExportProgress) => {
             setExportProgress(progress);
           },
+          // Camera PiP config
+          cameraVideoUrl: cameraVideoPath || undefined,
+          cameraPipConfig,
         });
 
         exporterRef.current = exporter;
@@ -739,7 +745,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, cameraVideoPath, cameraPipConfig]);
 
   const handleCancelExport = useCallback(() => {
     if (exporterRef.current) {

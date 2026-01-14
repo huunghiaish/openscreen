@@ -2,7 +2,7 @@ import GIF from 'gif.js';
 import type { ExportProgress, ExportResult, GifFrameRate, GifSizePreset, GIF_SIZE_PRESETS } from './types';
 import { VideoFileDecoder } from './videoDecoder';
 import { FrameRenderer } from './frameRenderer';
-import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion } from '@/components/video-editor/types';
+import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion, CameraPipConfig } from '@/components/video-editor/types';
 
 const GIF_WORKER_URL = new URL('gif.js/dist/gif.worker.js', import.meta.url).toString();
 
@@ -28,6 +28,9 @@ interface GifExporterConfig {
   previewWidth?: number;
   previewHeight?: number;
   onProgress?: (progress: ExportProgress) => void;
+  // Camera PiP config
+  cameraVideoUrl?: string;
+  cameraPipConfig?: CameraPipConfig;
 }
 
 /**
@@ -137,6 +140,13 @@ export class GifExporter {
         annotationRegions: this.config.annotationRegions,
         previewWidth: this.config.previewWidth,
         previewHeight: this.config.previewHeight,
+        // Pass camera PiP config if provided
+        cameraExport: this.config.cameraVideoUrl && this.config.cameraPipConfig
+          ? {
+              videoUrl: this.config.cameraVideoUrl,
+              pipConfig: this.config.cameraPipConfig,
+            }
+          : undefined,
       });
       await this.renderer.initialize();
 
@@ -252,7 +262,7 @@ export class GifExporter {
       }
 
       // Render the GIF
-      const blob = await new Promise<Blob>((resolve, reject) => {
+      const blob = await new Promise<Blob>((resolve) => {
         this.gif!.on('finished', (blob: Blob) => {
           resolve(blob);
         });
