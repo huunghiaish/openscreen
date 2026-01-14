@@ -73,7 +73,11 @@ export default function VideoEditor() {
   const [cameraPipConfig, setCameraPipConfig] = useState<CameraPipConfig>(
     DEFAULT_CAMERA_PIP_CONFIG
   );
-  void setCameraPipConfig; // Will be used in Phase 3 for settings panel
+
+  // Camera PiP config change handler
+  const handleCameraPipConfigChange = useCallback((updates: Partial<CameraPipConfig>) => {
+    setCameraPipConfig((prev) => ({ ...prev, ...updates }));
+  }, []);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -916,6 +920,9 @@ export default function VideoEditor() {
           onAnnotationStyleChange={handleAnnotationStyleChange}
           onAnnotationFigureDataChange={handleAnnotationFigureDataChange}
           onAnnotationDelete={handleAnnotationDelete}
+          cameraVideoPath={cameraVideoPath}
+          cameraPipConfig={cameraPipConfig}
+          onCameraPipConfigChange={handleCameraPipConfigChange}
         />
       </div>
 

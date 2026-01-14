@@ -9,8 +9,9 @@ import { useState } from "react";
 import Block from '@uiw/react-color-block';
 import { Trash2, Download, Crop, X, Bug, Upload, Star, Film, Image } from "lucide-react";
 import { toast } from "sonner";
-import type { ZoomDepth, CropRegion, AnnotationRegion, AnnotationType, FigureData } from "./types";
+import type { ZoomDepth, CropRegion, AnnotationRegion, AnnotationType, FigureData, CameraPipConfig } from "./types";
 import { CropControl } from "./CropControl";
+import { CameraPipSettings } from "./CameraPipSettings";
 import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 import { AnnotationSettingsPanel } from "./AnnotationSettingsPanel";
 import { type AspectRatio } from "@/utils/aspectRatioUtils";
@@ -89,6 +90,10 @@ interface SettingsPanelProps {
   onAnnotationStyleChange?: (id: string, style: Partial<AnnotationRegion['style']>) => void;
   onAnnotationFigureDataChange?: (id: string, figureData: FigureData) => void;
   onAnnotationDelete?: (id: string) => void;
+  // Camera PiP settings
+  cameraVideoPath?: string | null;
+  cameraPipConfig?: CameraPipConfig;
+  onCameraPipConfigChange?: (config: Partial<CameraPipConfig>) => void;
 }
 
 export default SettingsPanel;
@@ -144,6 +149,9 @@ export function SettingsPanel({
   onAnnotationStyleChange,
   onAnnotationFigureDataChange,
   onAnnotationDelete,
+  cameraVideoPath,
+  cameraPipConfig,
+  onCameraPipConfigChange,
 }: SettingsPanelProps) {
   const [wallpaperPaths, setWallpaperPaths] = useState<string[]>([]);
   const [customImages, setCustomImages] = useState<string[]>([]);
@@ -319,6 +327,14 @@ export function SettingsPanel({
           </Button>
         )}
       </div>
+
+      {/* Camera PiP Settings - only visible when camera video exists */}
+      {cameraVideoPath && cameraPipConfig && onCameraPipConfigChange && (
+        <CameraPipSettings
+          config={cameraPipConfig}
+          onConfigChange={onCameraPipConfigChange}
+        />
+      )}
 
       <div className="mb-6">
         <div className="grid grid-cols-2 gap-3">
