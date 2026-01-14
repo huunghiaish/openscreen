@@ -148,21 +148,13 @@ export class CameraPipRenderer {
     const margin = Math.round(canvasWidth * 0.02); // 2% margin
 
     // Calculate actual pip dimensions based on shape
-    const cameraAspectRatio = this.cameraCanvas.width / this.cameraCanvas.height;
     let pipWidth = baseSize;
     let pipHeight = baseSize;
 
-    if (!shapeParams.forceSquare && cameraAspectRatio !== 1) {
-      // Rectangle shape: maintain original camera aspect ratio
-      if (cameraAspectRatio > 1) {
-        // Landscape camera
-        pipWidth = baseSize;
-        pipHeight = Math.round(baseSize / cameraAspectRatio);
-      } else {
-        // Portrait camera
-        pipHeight = baseSize;
-        pipWidth = Math.round(baseSize * cameraAspectRatio);
-      }
+    if (!shapeParams.forceSquare) {
+      // Rectangle shape: fixed 4:3 aspect ratio
+      pipWidth = baseSize;
+      pipHeight = Math.round(baseSize * 3 / 4); // 4:3 ratio
     }
 
     let x: number, y: number;
