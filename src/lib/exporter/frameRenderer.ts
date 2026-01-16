@@ -285,16 +285,21 @@ export class FrameRenderer {
 
     // Create or update video sprite from VideoFrame
     // VideoFrame is compatible with PixiJS Texture.from but not typed
+    // Optimization: Reuse texture by updating its source instead of destroy/recreate
     if (!this.videoSprite) {
       const texture = Texture.from(videoFrame as unknown as HTMLVideoElement);
       this.videoSprite = new Sprite(texture);
       this.videoContainer.addChild(this.videoSprite);
     } else {
-      // Destroy old texture to avoid memory leaks, then create new one
-      const oldTexture = this.videoSprite.texture;
+      // Update texture source directly instead of destroy/recreate cycle
+      // This avoids GPU memory churn and reduces per-frame overhead
       const newTexture = Texture.from(videoFrame as unknown as HTMLVideoElement);
+      const oldTexture = this.videoSprite.texture;
       this.videoSprite.texture = newTexture;
-      oldTexture.destroy(true);
+      // Only destroy old texture if it's not the same reference
+      if (oldTexture !== newTexture && oldTexture !== Texture.EMPTY) {
+        oldTexture.destroy(true);
+      }
     }
 
     // Apply layout

@@ -3,6 +3,8 @@ import { VideoFileDecoder } from './videoDecoder';
 import { AudioFileDecoder, mixAudioBuffersAsync } from './audioDecoder';
 import { FrameRenderer } from './frameRenderer';
 import { VideoMuxer } from './muxer';
+import { EncodeQueue } from './encode-queue';
+import { PrefetchManager } from './prefetch-manager';
 import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion, CameraPipConfig } from '@/components/video-editor/types';
 
 interface VideoExporterConfig extends ExportConfig {
@@ -37,9 +39,10 @@ export class VideoExporter {
   private encoder: VideoEncoder | null = null;
   private muxer: VideoMuxer | null = null;
   private cancelled = false;
-  private encodeQueue = 0;
-  // Increased queue size for better throughput with hardware encoding
-  private readonly MAX_ENCODE_QUEUE = 120;
+  // Event-driven encode queue (replaces busy-wait with Promise backpressure)
+  private encodeQueueManager: EncodeQueue;
+  // Prefetch manager for dual video element frame extraction
+  private prefetchManager: PrefetchManager | null = null;
   private videoDescription: Uint8Array | undefined;
   private videoColorSpace: VideoColorSpaceInit | undefined;
   // Track muxing promises for parallel processing
@@ -50,12 +53,20 @@ export class VideoExporter {
   private systemAudioDecoder: AudioFileDecoder | null = null;
   private audioEncoder: AudioEncoder | null = null;
   private mixedAudioBuffer: AudioBuffer | null = null;
-  private audioEncodeQueue = 0;
-  private readonly MAX_AUDIO_ENCODE_QUEUE = 60;
+  // Event-driven audio encode queue
+  private audioEncodeQueueManager: EncodeQueue;
   private audioChunkCount = 0;
+  // Performance telemetry
+  private exportStartTime = 0;
+  private frameTimings: number[] = [];
 
   constructor(config: VideoExporterConfig) {
     this.config = config;
+    // Initialize encode queues with optimal sizes for hardware encoding
+    // Video: 4-8 frames optimal for hardware encoder pipeline
+    // Audio: 8 frames for audio chunks
+    this.encodeQueueManager = new EncodeQueue({ maxSize: 6 });
+    this.audioEncodeQueueManager = new EncodeQueue({ maxSize: 8 });
   }
 
   // Calculate the total duration excluding trim regions (in seconds)
@@ -92,10 +103,21 @@ export class VideoExporter {
     try {
       this.cleanup();
       this.cancelled = false;
+      this.exportStartTime = performance.now();
+      this.frameTimings = [];
 
-      // Initialize decoder and load video
+      // Initialize prefetch manager with dual video elements
+      this.prefetchManager = new PrefetchManager({
+        videoUrl: this.config.videoUrl,
+        trimRegions: this.config.trimRegions,
+        frameRate: this.config.frameRate,
+        debug: false,
+      });
+      const videoInfo = await this.prefetchManager.initialize();
+
+      // Also initialize decoder for compatibility (some features may still need it)
       this.decoder = new VideoFileDecoder();
-      const videoInfo = await this.decoder.loadVideo(this.config.videoUrl);
+      await this.decoder.loadVideo(this.config.videoUrl);
 
       // Initialize frame renderer
       this.renderer = new FrameRenderer({
@@ -140,51 +162,26 @@ export class VideoExporter {
         await this.initializeAudioEncoder();
       }
 
-      // Get the video element for frame extraction
-      const videoElement = this.decoder.getVideoElement();
-      if (!videoElement) {
-        throw new Error('Video element not available');
-      }
-
       // Calculate effective duration and frame count (excluding trim regions)
       const effectiveDuration = this.getEffectiveDuration(videoInfo.duration);
       const totalFrames = Math.ceil(effectiveDuration * this.config.frameRate);
-      
+
       console.log('[VideoExporter] Original duration:', videoInfo.duration, 's');
       console.log('[VideoExporter] Effective duration:', effectiveDuration, 's');
       console.log('[VideoExporter] Total frames to export:', totalFrames);
+      console.log('[VideoExporter] Using prefetch manager with dual video elements');
 
-      // Process frames continuously without batching delays
+      // Process frames with prefetch-based pipeline (overlaps seek latency)
       const frameDuration = 1_000_000 / this.config.frameRate; // in microseconds
-      let frameIndex = 0;
       const timeStep = 1 / this.config.frameRate;
 
-      while (frameIndex < totalFrames && !this.cancelled) {
-        const i = frameIndex;
-        const timestamp = i * frameDuration;
+      for (let frameIndex = 0; frameIndex < totalFrames && !this.cancelled; frameIndex++) {
+        const frameStartTime = performance.now();
+        const timestamp = frameIndex * frameDuration;
+        const effectiveTimeMs = frameIndex * timeStep * 1000;
 
-        // Map effective time to source time (accounting for trim regions)
-        const effectiveTimeMs = (i * timeStep) * 1000;
-        const sourceTimeMs = this.mapEffectiveToSourceTime(effectiveTimeMs);
-        const videoTime = sourceTimeMs / 1000;
-          
-        // Seek if needed or wait for first frame to be ready
-        const needsSeek = Math.abs(videoElement.currentTime - videoTime) > 0.001;
-
-        if (needsSeek) {
-          // Attach listener BEFORE setting currentTime to avoid race condition
-          const seekedPromise = new Promise<void>(resolve => {
-            videoElement.addEventListener('seeked', () => resolve(), { once: true });
-          });
-          
-          videoElement.currentTime = videoTime;
-          await seekedPromise;
-        } else if (i === 0) {
-          // Only for the very first frame, wait for it to be ready
-          await new Promise<void>(resolve => {
-            videoElement.requestVideoFrameCallback(() => resolve());
-          });
-        }
+        // Get prefetched video element (handles seek timing overlap)
+        const videoElement = await this.prefetchManager!.getFrame(frameIndex, effectiveTimeMs);
 
         // Create a VideoFrame from the video element (on GPU!)
         const videoFrame = new VideoFrame(videoElement, {
@@ -192,9 +189,11 @@ export class VideoExporter {
         });
 
         // Render the frame with all effects using source timestamp
+        // PrefetchManager already mapped effective -> source time internally
+        const sourceTimeMs = this.mapEffectiveToSourceTime(effectiveTimeMs);
         const sourceTimestamp = sourceTimeMs * 1000; // Convert to microseconds
         await this.renderer!.renderFrame(videoFrame, sourceTimestamp);
-        
+
         videoFrame.close();
 
         const canvas = this.renderer!.getCanvas();
@@ -212,29 +211,42 @@ export class VideoExporter {
           },
         });
 
-        // Check encoder queue before encoding to keep it full
-        while (this.encodeQueue >= this.MAX_ENCODE_QUEUE && !this.cancelled) {
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
+        // Wait for encoder queue space using Promise-based backpressure (no busy-wait)
+        await this.encodeQueueManager.waitForSpace();
 
         if (this.encoder && this.encoder.state === 'configured') {
-          this.encodeQueue++;
-          this.encoder.encode(exportFrame, { keyFrame: i % 150 === 0 });
+          try {
+            this.encodeQueueManager.increment();
+            this.encoder.encode(exportFrame, { keyFrame: frameIndex % 150 === 0 });
+          } catch (encodeError) {
+            // Decrement queue on encode failure to prevent queue desync
+            this.encodeQueueManager.onChunkOutput();
+            console.error(`[Frame ${frameIndex}] Encode error:`, encodeError);
+            // Continue export - single frame failure shouldn't halt entire export
+          }
         } else {
-          console.warn(`[Frame ${i}] Encoder not ready! State: ${this.encoder?.state}`);
+          console.warn(`[Frame ${frameIndex}] Encoder not ready! State: ${this.encoder?.state}`);
         }
 
         exportFrame.close();
 
-        frameIndex++;
+        // Track frame timing for telemetry (limit to last 1000 samples to prevent unbounded growth)
+        this.frameTimings.push(performance.now() - frameStartTime);
+        if (this.frameTimings.length > 1000) {
+          this.frameTimings.shift();
+        }
 
-        // Update progress
+        // Update progress with estimated time remaining
         if (this.config.onProgress) {
+          const avgFrameTime = this.frameTimings.reduce((a, b) => a + b, 0) / this.frameTimings.length;
+          const remainingFrames = totalFrames - frameIndex - 1;
+          const estimatedTimeRemaining = (avgFrameTime * remainingFrames) / 1000; // in seconds
+
           this.config.onProgress({
-            currentFrame: frameIndex,
+            currentFrame: frameIndex + 1,
             totalFrames,
-            percentage: (frameIndex / totalFrames) * 100,
-            estimatedTimeRemaining: 0,
+            percentage: ((frameIndex + 1) / totalFrames) * 100,
+            estimatedTimeRemaining,
           });
         }
       }
@@ -277,7 +289,7 @@ export class VideoExporter {
   }
 
   private async initializeEncoder(): Promise<void> {
-    this.encodeQueue = 0;
+    this.encodeQueueManager.reset();
     this.muxingPromises = [];
     this.chunkCount = 0;
     let videoDescription: Uint8Array | undefined;
@@ -330,7 +342,8 @@ export class VideoExporter {
         })();
 
         this.muxingPromises.push(muxingPromise);
-        this.encodeQueue--;
+        // Signal queue space available (triggers Promise resolution for waiters)
+        this.encodeQueueManager.onChunkOutput();
       },
       error: (error) => {
         console.error('[VideoExporter] Encoder error:', error);
@@ -436,14 +449,14 @@ export class VideoExporter {
   }
 
   /**
-   * Initialize AAC audio encoder
+   * Initialize Opus audio encoder
    */
   private async initializeAudioEncoder(): Promise<void> {
     if (!this.mixedAudioBuffer) {
       throw new Error('No audio buffer available');
     }
 
-    this.audioEncodeQueue = 0;
+    this.audioEncodeQueueManager.reset();
     this.audioChunkCount = 0;
 
     this.audioEncoder = new AudioEncoder({
@@ -472,7 +485,8 @@ export class VideoExporter {
         })();
 
         this.muxingPromises.push(muxingPromise);
-        this.audioEncodeQueue--;
+        // Signal audio queue space available
+        this.audioEncodeQueueManager.onChunkOutput();
       },
       error: (error) => {
         console.error('[VideoExporter] Audio encoder error:', error);
@@ -560,14 +574,19 @@ export class VideoExporter {
         data: planarData.buffer as ArrayBuffer,
       });
 
-      // Wait for encoder queue to have space
-      while (this.audioEncodeQueue >= this.MAX_AUDIO_ENCODE_QUEUE && !this.cancelled) {
-        await new Promise(resolve => setTimeout(resolve, 0));
-      }
+      // Wait for encoder queue space using Promise-based backpressure (no busy-wait)
+      await this.audioEncodeQueueManager.waitForSpace();
 
       if (this.audioEncoder.state === 'configured') {
-        this.audioEncodeQueue++;
-        this.audioEncoder.encode(audioDataObj);
+        try {
+          this.audioEncodeQueueManager.increment();
+          this.audioEncoder.encode(audioDataObj);
+        } catch (audioEncodeError) {
+          // Decrement queue on encode failure to prevent queue desync
+          this.audioEncodeQueueManager.onChunkOutput();
+          console.error('[VideoExporter] Audio encode error:', audioEncodeError);
+          // Continue - single chunk failure shouldn't halt entire export
+        }
       }
 
       audioDataObj.close();
@@ -595,6 +614,22 @@ export class VideoExporter {
   }
 
   private cleanup(): void {
+    // Log performance telemetry before cleanup
+    if (this.frameTimings.length > 0) {
+      const avgFrameTime = this.frameTimings.reduce((a, b) => a + b, 0) / this.frameTimings.length;
+      const totalTime = (performance.now() - this.exportStartTime) / 1000;
+      const encodeStats = this.encodeQueueManager.getStats();
+      const prefetchStats = this.prefetchManager?.getStats();
+
+      console.log('[VideoExporter] Export telemetry:');
+      console.log(`  - Total time: ${totalTime.toFixed(2)}s`);
+      console.log(`  - Avg frame time: ${avgFrameTime.toFixed(2)}ms`);
+      console.log(`  - Encode queue: peak=${encodeStats.peakSize}, waits=${encodeStats.totalWaits}`);
+      if (prefetchStats) {
+        console.log(`  - Prefetch: hits=${prefetchStats.prefetchHits}, misses=${prefetchStats.prefetchMisses}, hitRate=${(prefetchStats.hitRate * 100).toFixed(1)}%`);
+      }
+    }
+
     if (this.encoder) {
       try {
         if (this.encoder.state === 'configured') {
@@ -616,6 +651,16 @@ export class VideoExporter {
         console.warn('Error closing audio encoder:', e);
       }
       this.audioEncoder = null;
+    }
+
+    // Clean up prefetch manager
+    if (this.prefetchManager) {
+      try {
+        this.prefetchManager.destroy();
+      } catch (e) {
+        console.warn('Error destroying prefetch manager:', e);
+      }
+      this.prefetchManager = null;
     }
 
     if (this.decoder) {
@@ -656,14 +701,16 @@ export class VideoExporter {
     }
 
     this.muxer = null;
-    this.encodeQueue = 0;
+    this.encodeQueueManager.reset();
     this.muxingPromises = [];
     this.chunkCount = 0;
     this.videoDescription = undefined;
     this.videoColorSpace = undefined;
     // Clean up audio state
     this.mixedAudioBuffer = null;
-    this.audioEncodeQueue = 0;
+    this.audioEncodeQueueManager.reset();
     this.audioChunkCount = 0;
+    // Clean up telemetry
+    this.frameTimings = [];
   }
 }
