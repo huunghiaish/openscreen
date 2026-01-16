@@ -793,6 +793,9 @@ export default function VideoEditor() {
           // Camera PiP config
           cameraVideoUrl: cameraVideoPathRef.current || undefined,
           cameraPipConfig,
+          // Audio tracks
+          micAudioUrl: micAudioPath || undefined,
+          systemAudioUrl: systemAudioPath || undefined,
         });
 
         exporterRef.current = exporter;

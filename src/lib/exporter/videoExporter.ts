@@ -1,5 +1,6 @@
 import type { ExportConfig, ExportProgress, ExportResult } from './types';
 import { VideoFileDecoder } from './videoDecoder';
+import { AudioFileDecoder, mixAudioBuffersAsync } from './audioDecoder';
 import { FrameRenderer } from './frameRenderer';
 import { VideoMuxer } from './muxer';
 import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion, CameraPipConfig } from '@/components/video-editor/types';
@@ -24,6 +25,9 @@ interface VideoExporterConfig extends ExportConfig {
   // Camera PiP config
   cameraVideoUrl?: string;
   cameraPipConfig?: CameraPipConfig;
+  // Audio tracks
+  micAudioUrl?: string;
+  systemAudioUrl?: string;
 }
 
 export class VideoExporter {
@@ -41,6 +45,14 @@ export class VideoExporter {
   // Track muxing promises for parallel processing
   private muxingPromises: Promise<void>[] = [];
   private chunkCount = 0;
+  // Audio encoding state
+  private micAudioDecoder: AudioFileDecoder | null = null;
+  private systemAudioDecoder: AudioFileDecoder | null = null;
+  private audioEncoder: AudioEncoder | null = null;
+  private mixedAudioBuffer: AudioBuffer | null = null;
+  private audioEncodeQueue = 0;
+  private readonly MAX_AUDIO_ENCODE_QUEUE = 60;
+  private audioChunkCount = 0;
 
   constructor(config: VideoExporterConfig) {
     this.config = config;
@@ -116,9 +128,17 @@ export class VideoExporter {
       // Initialize video encoder
       await this.initializeEncoder();
 
-      // Initialize muxer
-      this.muxer = new VideoMuxer(this.config, false);
+      // Load and decode audio files if provided
+      const hasAudio = await this.loadAndMixAudio();
+
+      // Initialize muxer with audio support if audio files present (use Opus codec)
+      this.muxer = new VideoMuxer(this.config, hasAudio, 'opus');
       await this.muxer.initialize();
+
+      // Initialize audio encoder if we have audio
+      if (hasAudio) {
+        await this.initializeAudioEncoder();
+      }
 
       // Get the video element for frame extraction
       const videoElement = this.decoder.getVideoElement();
@@ -223,9 +243,19 @@ export class VideoExporter {
         return { success: false, error: 'Export cancelled' };
       }
 
-      // Finalize encoding
+      // Finalize video encoding
       if (this.encoder && this.encoder.state === 'configured') {
         await this.encoder.flush();
+      }
+
+      // Encode audio if we have audio buffer
+      if (hasAudio && this.mixedAudioBuffer) {
+        await this.encodeAudioBuffer(effectiveDuration);
+      }
+
+      // Finalize audio encoding
+      if (this.audioEncoder && this.audioEncoder.state === 'configured') {
+        await this.audioEncoder.flush();
       }
 
       // Wait for all muxing operations to complete
@@ -348,6 +378,222 @@ export class VideoExporter {
     this.cleanup();
   }
 
+  /**
+   * Load and mix audio files from mic and system audio
+   * Returns true if audio is available for export
+   */
+  private async loadAndMixAudio(): Promise<boolean> {
+    const { micAudioUrl, systemAudioUrl } = this.config;
+
+    if (!micAudioUrl && !systemAudioUrl) {
+      console.log('[VideoExporter] No audio files provided');
+      return false;
+    }
+
+    try {
+      const audioBuffers: (AudioBuffer | null)[] = [];
+      const audioGains: number[] = [];
+
+      // Load mic audio if provided (full volume - priority for voiceover)
+      if (micAudioUrl) {
+        console.log('[VideoExporter] Loading mic audio:', micAudioUrl);
+        this.micAudioDecoder = new AudioFileDecoder();
+        const micInfo = await this.micAudioDecoder.loadAudio(micAudioUrl);
+        console.log('[VideoExporter] Mic audio loaded:', micInfo);
+        audioBuffers.push(this.micAudioDecoder.getAudioBuffer());
+        audioGains.push(1.0); // Mic at full volume
+      }
+
+      // Load system audio if provided (reduced volume so mic is clearer)
+      if (systemAudioUrl) {
+        console.log('[VideoExporter] Loading system audio:', systemAudioUrl);
+        this.systemAudioDecoder = new AudioFileDecoder();
+        const systemInfo = await this.systemAudioDecoder.loadAudio(systemAudioUrl);
+        console.log('[VideoExporter] System audio loaded:', systemInfo);
+        audioBuffers.push(this.systemAudioDecoder.getAudioBuffer());
+        audioGains.push(0.5); // System audio at 50% to not overpower mic
+      }
+
+      // Mix audio buffers with specified gains at 48kHz
+      console.log('[VideoExporter] Mixing audio with gains:', audioGains);
+      this.mixedAudioBuffer = await mixAudioBuffersAsync(audioBuffers, audioGains, 48000);
+
+      if (this.mixedAudioBuffer) {
+        console.log('[VideoExporter] Mixed audio buffer ready:',
+          'duration:', this.mixedAudioBuffer.duration,
+          'channels:', this.mixedAudioBuffer.numberOfChannels,
+          'sampleRate:', this.mixedAudioBuffer.sampleRate
+        );
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error('[VideoExporter] Failed to load audio:', error);
+      // Don't fail export if audio fails, just export without audio
+      return false;
+    }
+  }
+
+  /**
+   * Initialize AAC audio encoder
+   */
+  private async initializeAudioEncoder(): Promise<void> {
+    if (!this.mixedAudioBuffer) {
+      throw new Error('No audio buffer available');
+    }
+
+    this.audioEncodeQueue = 0;
+    this.audioChunkCount = 0;
+
+    this.audioEncoder = new AudioEncoder({
+      output: (chunk, meta) => {
+        const isFirstChunk = this.audioChunkCount === 0;
+        this.audioChunkCount++;
+
+        const muxingPromise = (async () => {
+          try {
+            if (isFirstChunk) {
+              // Add decoder config for the first chunk (Opus codec)
+              const metadata: EncodedAudioChunkMetadata = {
+                decoderConfig: {
+                  codec: 'opus',
+                  sampleRate: 48000,
+                  numberOfChannels: this.mixedAudioBuffer?.numberOfChannels || 2,
+                },
+              };
+              await this.muxer!.addAudioChunk(chunk, metadata);
+            } else {
+              await this.muxer!.addAudioChunk(chunk, meta);
+            }
+          } catch (error) {
+            console.error('[VideoExporter] Audio muxing error:', error);
+          }
+        })();
+
+        this.muxingPromises.push(muxingPromise);
+        this.audioEncodeQueue--;
+      },
+      error: (error) => {
+        console.error('[VideoExporter] Audio encoder error:', error);
+        this.cancelled = true;
+      },
+    });
+
+    // Use Opus codec - well supported by WebCodecs (AAC is not reliably supported)
+    const audioConfig: AudioEncoderConfig = {
+      codec: 'opus',
+      sampleRate: 48000,
+      numberOfChannels: this.mixedAudioBuffer.numberOfChannels,
+      bitrate: 128000, // 128 kbps stereo
+    };
+
+    const support = await AudioEncoder.isConfigSupported(audioConfig);
+    if (!support.supported) {
+      throw new Error('Opus audio encoding not supported on this system');
+    }
+
+    console.log('[VideoExporter] Initializing Opus audio encoder');
+    this.audioEncoder.configure(audioConfig);
+  }
+
+  /**
+   * Encode audio buffer in chunks synchronized with video timeline
+   * Handles trim regions by calculating effective audio range
+   */
+  private async encodeAudioBuffer(effectiveDuration: number): Promise<void> {
+    if (!this.mixedAudioBuffer || !this.audioEncoder) {
+      return;
+    }
+
+    const sampleRate = this.mixedAudioBuffer.sampleRate;
+    const numChannels = this.mixedAudioBuffer.numberOfChannels;
+
+    // Calculate effective audio samples to encode
+    // We need to skip samples that correspond to trimmed video regions
+    const effectiveSamples = Math.ceil(effectiveDuration * sampleRate);
+
+    console.log('[VideoExporter] Encoding audio:',
+      'effectiveDuration:', effectiveDuration,
+      'effectiveSamples:', effectiveSamples
+    );
+
+    // Get channel data
+    const channels: Float32Array[] = [];
+    for (let ch = 0; ch < numChannels; ch++) {
+      channels.push(this.mixedAudioBuffer.getChannelData(ch));
+    }
+
+    // Process audio in chunks of 1024 samples (standard AAC frame size)
+    const samplesPerChunk = 1024;
+    let outputSampleIndex = 0;
+
+    while (outputSampleIndex < effectiveSamples && !this.cancelled) {
+      // Calculate time range for this chunk (in effective time, without trims)
+      const startTimeMs = (outputSampleIndex / sampleRate) * 1000;
+      const chunkSamples = Math.min(samplesPerChunk, effectiveSamples - outputSampleIndex);
+
+      // Map effective time to source time (accounting for trims)
+      const sourceTimeMs = this.mapEffectiveToSourceTime(startTimeMs);
+      const sourceSampleStart = Math.floor((sourceTimeMs / 1000) * sampleRate);
+
+      // Create interleaved audio data for this chunk
+      const audioData = new Float32Array(chunkSamples * numChannels);
+
+      for (let i = 0; i < chunkSamples; i++) {
+        const srcIdx = sourceSampleStart + i;
+        for (let ch = 0; ch < numChannels; ch++) {
+          const value = srcIdx < channels[ch].length ? channels[ch][srcIdx] : 0;
+          audioData[i * numChannels + ch] = value;
+        }
+      }
+
+      // Create AudioData object for encoding
+      const timestamp = outputSampleIndex / sampleRate * 1_000_000; // microseconds
+      const planarData = this.interleaveToPlanes(audioData, numChannels, chunkSamples);
+      const audioDataObj = new AudioData({
+        format: 'f32-planar',
+        sampleRate,
+        numberOfFrames: chunkSamples,
+        numberOfChannels: numChannels,
+        timestamp,
+        data: planarData.buffer as ArrayBuffer,
+      });
+
+      // Wait for encoder queue to have space
+      while (this.audioEncodeQueue >= this.MAX_AUDIO_ENCODE_QUEUE && !this.cancelled) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+
+      if (this.audioEncoder.state === 'configured') {
+        this.audioEncodeQueue++;
+        this.audioEncoder.encode(audioDataObj);
+      }
+
+      audioDataObj.close();
+      outputSampleIndex += chunkSamples;
+    }
+
+    console.log('[VideoExporter] Audio encoding complete:',
+      'chunks:', this.audioChunkCount
+    );
+  }
+
+  /**
+   * Convert interleaved audio data to planar format for AudioData
+   */
+  private interleaveToPlanes(interleaved: Float32Array, numChannels: number, numFrames: number): Float32Array {
+    const planar = new Float32Array(numFrames * numChannels);
+
+    for (let ch = 0; ch < numChannels; ch++) {
+      for (let i = 0; i < numFrames; i++) {
+        planar[ch * numFrames + i] = interleaved[i * numChannels + ch];
+      }
+    }
+
+    return planar;
+  }
+
   private cleanup(): void {
     if (this.encoder) {
       try {
@@ -360,6 +606,18 @@ export class VideoExporter {
       this.encoder = null;
     }
 
+    // Clean up audio encoder
+    if (this.audioEncoder) {
+      try {
+        if (this.audioEncoder.state === 'configured') {
+          this.audioEncoder.close();
+        }
+      } catch (e) {
+        console.warn('Error closing audio encoder:', e);
+      }
+      this.audioEncoder = null;
+    }
+
     if (this.decoder) {
       try {
         this.decoder.destroy();
@@ -367,6 +625,25 @@ export class VideoExporter {
         console.warn('Error destroying decoder:', e);
       }
       this.decoder = null;
+    }
+
+    // Clean up audio decoders
+    if (this.micAudioDecoder) {
+      try {
+        this.micAudioDecoder.destroy();
+      } catch (e) {
+        console.warn('Error destroying mic audio decoder:', e);
+      }
+      this.micAudioDecoder = null;
+    }
+
+    if (this.systemAudioDecoder) {
+      try {
+        this.systemAudioDecoder.destroy();
+      } catch (e) {
+        console.warn('Error destroying system audio decoder:', e);
+      }
+      this.systemAudioDecoder = null;
     }
 
     if (this.renderer) {
@@ -384,5 +661,9 @@ export class VideoExporter {
     this.chunkCount = 0;
     this.videoDescription = undefined;
     this.videoColorSpace = undefined;
+    // Clean up audio state
+    this.mixedAudioBuffer = null;
+    this.audioEncodeQueue = 0;
+    this.audioChunkCount = 0;
   }
 }

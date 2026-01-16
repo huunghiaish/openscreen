@@ -11,6 +11,9 @@ export interface ExportConfig {
   frameRate: number;
   bitrate: number;
   codec?: string;
+  // Audio tracks for export
+  micAudioUrl?: string;
+  systemAudioUrl?: string;
 }
 
 export interface ExportProgress {

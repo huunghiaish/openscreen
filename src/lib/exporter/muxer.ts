@@ -15,10 +15,12 @@ export class VideoMuxer {
   private hasAudio: boolean;
   private target: BufferTarget | null = null;
   private config: ExportConfig;
+  private audioCodec: 'aac' | 'opus';
 
-  constructor(config: ExportConfig, hasAudio = false) {
+  constructor(config: ExportConfig, hasAudio = false, audioCodec: 'aac' | 'opus' = 'aac') {
     this.config = config;
     this.hasAudio = hasAudio;
+    this.audioCodec = audioCodec;
   }
 
   async initialize(): Promise<void> {
@@ -38,9 +40,9 @@ export class VideoMuxer {
       frameRate: this.config.frameRate,
     });
 
-    // Create audio source if needed
+    // Create audio source if needed (AAC for MP4 compatibility)
     if (this.hasAudio) {
-      this.audioSource = new EncodedAudioPacketSource('opus');
+      this.audioSource = new EncodedAudioPacketSource(this.audioCodec);
       this.output.addAudioTrack(this.audioSource);
     }
 
