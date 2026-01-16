@@ -250,6 +250,21 @@ const {
 - Backpressure prevention: Monitors `decodeQueueSize` to prevent memory exhaustion
 - Frame callback delivers decoded VideoFrames in presentation order
 
+**Decoded Frame Buffer** (NEW - Phase 3):
+- Class: `DecodedFrameBuffer` memory-bounded buffer for decoded VideoFrames
+- Buffers frames between VideoDecoderService output and worker consumption
+- Key methods:
+  - `addFrame()` - Add decoded frame (evicts oldest if buffer full)
+  - `consumeFrame(frameIndex)` - Get and remove frame by index from buffer
+  - `getFrame(frameIndex)` - Non-destructive frame lookup
+  - `waitForSpace()` - Backpressure for producer when buffer full
+  - `getStats()` - Buffer metrics (size, added/consumed/evicted counts, bounds)
+- Configuration: maxFrames (default: 16), frameRate (required), timestampTolerance (µs)
+- Frame index conversion: Converts frame sequence number to timestamp using frame rate
+- Memory management: FIFO eviction with GPU memory cleanup via `frame.close()`
+- VFR support: Configurable timestamp tolerance for Variable Frame Rate content
+- 34 unit tests covering lookup, consumption, eviction, backpressure
+
 **Formats Supported**:
 - MP4 (H.264 video codec, AAC audio)
 - GIF (animated, adjustable frame rate and size)

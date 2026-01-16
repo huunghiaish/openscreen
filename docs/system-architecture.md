@@ -422,6 +422,96 @@ service.close();
 - Replaces synchronous HTML5 video element seeking for performance
 - Enables true hardware-accelerated export pipeline
 
+### Phase 3: Decoded Frame Buffer (NEW)
+
+**DecodedFrameBuffer Class** (`src/lib/exporter/decoded-frame-buffer.ts`, 488 LOC)
+
+Memory-bounded buffer for decoded VideoFrames between VideoDecoderService output and worker consumption with frame index-based lookup.
+
+**Key Features**:
+- **Frame Storage**: Map of VideoFrames indexed by timestamp for O(1) lookup
+- **Index Mapping**: Converts frame sequence numbers to timestamps using frame rate
+- **Memory Bounded**: Max buffer size (default: 16 frames) with automatic eviction
+- **Frame Eviction**: Oldest frames closed and removed when buffer full
+- **Backpressure**: Promise-based waiting for buffer space
+- **Timestamp Tolerance**: Configurable tolerance (microseconds) for VFR content handling
+- **Statistics**: Tracks added, consumed, evicted frame counts and buffer bounds
+
+**Configuration**:
+```typescript
+interface FrameBufferConfig {
+  maxFrames?: number;        // Default: 16 (evict oldest when full)
+  frameRate: number;         // Required for index→timestamp conversion
+  timestampTolerance?: number;  // Default: half frame duration (µs)
+  debug?: boolean;           // Enable debug logging
+}
+```
+
+**Public API**:
+```typescript
+class DecodedFrameBuffer {
+  // Producer methods (from VideoDecoderService callback)
+  addFrame(frame: VideoFrame): void
+  isFull(): boolean
+  async waitForSpace(): Promise<void>
+
+  // Consumer methods (from workers requesting frames)
+  hasFrame(frameIndex: number): boolean
+  getFrame(frameIndex: number): VideoFrame | null      // Non-destructive
+  consumeFrame(frameIndex: number): VideoFrame | null  // Removes from buffer
+
+  // Lifecycle methods
+  flush(): VideoFrame[]  // Return all frames without closing
+  reset(): void          // Close all frames, clear state
+  destroy(): void        // Final cleanup
+
+  // Monitoring
+  getStats(): BufferStats
+  get size(): number
+}
+```
+
+**Usage Pattern**:
+```typescript
+const buffer = new DecodedFrameBuffer({ frameRate: 30, maxFrames: 16 });
+
+// Producer: decoder service adds frames
+decoderService.setFrameCallback((frame) => {
+  if (buffer.isFull()) {
+    await buffer.waitForSpace();
+  }
+  buffer.addFrame(frame);
+});
+
+// Consumer: workers fetch frames by index
+if (buffer.hasFrame(frameIndex)) {
+  const frame = buffer.consumeFrame(frameIndex);
+  await worker.render(frame);  // Zero-copy transfer
+  frame.close();  // Consumer responsible for cleanup
+}
+```
+
+**Memory Management**:
+- **Eviction Policy**: FIFO (oldest frame first) when maxFrames exceeded
+- **GPU Memory**: `frame.close()` called on evicted frames to release GPU resources
+- **VFR Handling**: Timestamp tolerance parameter accommodates Variable Frame Rate content drift
+  - For VFR: Recommend tolerance = 1-1.5x frame duration (e.g., 33-50ms at 30fps)
+  - Default tolerance = half frame duration (handles minor timing variation)
+
+**Integration Points**:
+- Sits between VideoDecoderService output and RenderCoordinator input
+- Enables decoupling of decode and render rates for pipeline flexibility
+- Supports zero-copy VideoFrame transfer to workers
+- Backpressure prevents decoder from outpacing worker consumption
+
+**Testing** (34 unit tests):
+- Frame addition, lookup, and consumption
+- Index→timestamp conversion with tolerance
+- Buffer full eviction behavior
+- Backpressure waiting mechanism
+- Batch operations and flush behavior
+- VFR timestamp handling
+
 ### Phase 2: Parallel Rendering Workers
 
 The export pipeline uses Web Workers for parallel frame rendering:

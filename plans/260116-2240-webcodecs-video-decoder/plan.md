@@ -7,7 +7,7 @@ effort: 12h
 branch: main
 tags: [performance, webcodecs, videodecoder, export, optimization]
 created: 2026-01-16
-updated: 2026-01-16 23:26
+updated: 2026-01-16 23:40
 ---
 
 # Phase 2.5: WebCodecs VideoDecoder for Fast Frame Extraction
@@ -44,7 +44,7 @@ Replace HTMLVideoElement with WebCodecs VideoDecoder pipeline:
 |-------|-------------|--------|--------|-----------|
 | [Phase 1](./phase-01-video-demuxer.md) | Video demuxer wrapper for MP4/WebM | ✅ DONE | 3h (actual: 4h) | 2026-01-16 23:10 |
 | [Phase 2](./phase-02-video-decoder-service.md) | VideoDecoder service with backpressure | ✅ DONE | 4h (actual: ~4h) | 2026-01-16 23:26 |
-| [Phase 3](./phase-03-frame-buffer.md) | Frame buffer and reordering | pending | 2h | — |
+| [Phase 3](./phase-03-frame-buffer.md) | Frame buffer and reordering | ✅ DONE | 2h (actual: ~2h) | 2026-01-16 23:40 |
 | [Phase 4](./phase-04-integration.md) | Integration with RenderCoordinator | pending | 3h | — |
 
 ## Key Dependencies

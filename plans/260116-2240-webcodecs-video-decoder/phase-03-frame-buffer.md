@@ -7,8 +7,9 @@
 
 ## Overview
 - **Priority:** P1
-- **Status:** pending
-- **Effort:** 2h
+- **Status:** ✅ DONE
+- **Effort:** 2h (actual: ~2h)
+- **Completed:** 2026-01-16 23:40
 
 Create a frame buffer that stores decoded VideoFrames ahead of worker consumption, handles presentation order (B-frame reordering), and manages memory by limiting buffer size. This decouples decode rate from render rate.
 
@@ -218,24 +219,24 @@ function findFrameByIndex(frameIndex: number): VideoFrame | null {
 3. Implement `destroy()` - calls reset, clears waiters
 
 ## Todo List
-- [ ] Create decoded-frame-buffer.ts with class skeleton
-- [ ] Implement constructor with config and Map storage
-- [ ] Implement indexToTimestamp conversion
-- [ ] Implement addFrame() with eviction
-- [ ] Implement evictOldest() with frame.close()
-- [ ] Implement hasFrame() check
-- [ ] Implement getFrame() with timestamp lookup
-- [ ] Implement consumeFrame() with removal
-- [ ] Implement isFull() check
-- [ ] Implement waitForSpace() with Promise queue
-- [ ] Implement notifyWaiters() callback
-- [ ] Implement flush() for drain
-- [ ] Implement reset() with cleanup
-- [ ] Implement destroy()
-- [ ] Add debug logging
-- [ ] Test buffer filling and eviction
-- [ ] Test frame retrieval by index
-- [ ] Verify frame.close() called on eviction
+- [x] Create decoded-frame-buffer.ts with class skeleton
+- [x] Implement constructor with config and Map storage
+- [x] Implement indexToTimestamp conversion
+- [x] Implement addFrame() with eviction
+- [x] Implement evictOldest() with frame.close()
+- [x] Implement hasFrame() check
+- [x] Implement getFrame() with timestamp lookup
+- [x] Implement consumeFrame() with removal
+- [x] Implement isFull() check
+- [x] Implement waitForSpace() with Promise queue
+- [x] Implement notifyWaiters() callback
+- [x] Implement flush() for drain
+- [x] Implement reset() with cleanup
+- [x] Implement destroy()
+- [x] Add debug logging
+- [x] Test buffer filling and eviction
+- [x] Test frame retrieval by index
+- [x] Verify frame.close() called on eviction
 
 ## Success Criteria
 1. Buffers up to maxFrames VideoFrames
