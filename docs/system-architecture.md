@@ -348,6 +348,80 @@ async function createDemuxerFromBlob(blob): Promise<{ demuxer, result }>
 - Resource cleanup (idempotent destroy, URL revocation)
 - Error handling (destroyed state validation)
 
+### Phase 2: Video Decoder Service (NEW)
+
+**VideoDecoderService Class** (`src/lib/exporter/video-decoder-service.ts`, 337 LOC)
+
+Hardware-accelerated video decoding using WebCodecs VideoDecoder API with automatic backpressure management.
+
+**Key Features**:
+- **Hardware Acceleration**: Automatic GPU acceleration (VideoToolbox on macOS, MediaFoundation on Windows)
+- **Backpressure Management**: Monitors `decodeQueueSize` to prevent memory exhaustion and queue overflow
+- **Frame Output Callback**: Decoded frames delivered in presentation order
+- **Performance Monitoring**: Decode timing stats and hardware acceleration detection
+
+**Configuration**:
+```typescript
+interface DecoderServiceConfig {
+  maxQueueSize?: number;  // Default: 8 (threshold before backpressure applied)
+  debug?: boolean;        // Enable debug logging
+}
+```
+
+**Public API**:
+```typescript
+class VideoDecoderService {
+  constructor(config?: DecoderServiceConfig)
+  async configure(config: VideoDecoderConfig): Promise<boolean>
+  canAcceptChunk(): boolean
+  async waitForSpace(): Promise<void>
+  async decode(chunk: EncodedVideoChunk): Promise<void>
+  async flush(): Promise<void>
+  close(): void
+  async reset(): Promise<boolean>
+  setFrameCallback(callback: FrameCallback): void
+  getStats(): DecoderStats
+  getState(): 'unconfigured' | 'configured' | 'closed'
+  getLastError(): Error | null
+}
+```
+
+**Usage Example**:
+```typescript
+const service = new VideoDecoderService({ maxQueueSize: 8 });
+service.setFrameCallback((frame, timestamp) => {
+  // Process frame
+  frame.close(); // Must close to release GPU memory
+});
+
+await service.configure(decoderConfig);
+
+for await (const chunk of demuxer.getChunksFromTimestamp(0)) {
+  await service.decode(chunk);  // Applies backpressure automatically
+}
+
+await service.flush();
+service.close();
+```
+
+**Backpressure Mechanism**:
+- `canAcceptChunk()`: Returns false if `decodeQueueSize >= maxQueueSize`
+- `waitForSpace()`: Returns immediately if space available, else waits for dequeue event
+- `decode()`: Internally calls `waitForSpace()` before submitting chunk
+- Event listener on 'dequeue' event resolves waiting promises
+
+**Performance Statistics** (`DecoderStats`):
+- `framesDecoded` - Successfully decoded frame count
+- `framesDropped` - Frames dropped due to errors
+- `averageDecodeTime` - Mean decode time in milliseconds
+- `queueSize` - Current decode queue size
+- `isHardwareAccelerated` - Estimated hardware acceleration (avg decode time <5ms with >10 frames)
+
+**Integration Points**:
+- Used by VideoExporter in Phase 2+ for decoding video frames from demuxer
+- Replaces synchronous HTML5 video element seeking for performance
+- Enables true hardware-accelerated export pipeline
+
 ### Phase 2: Parallel Rendering Workers
 
 The export pipeline uses Web Workers for parallel frame rendering:

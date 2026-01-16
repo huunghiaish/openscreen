@@ -236,6 +236,20 @@ const {
 - Returns metadata: width, height, duration, fps, frameCount
 - Tested: 313-line test suite with mock mediabunny
 
+**Video Decoder Service** (NEW - Phase 2):
+- Class: `VideoDecoderService` wraps WebCodecs VideoDecoder with backpressure
+- Hardware-accelerated video decoding (VideoToolbox on macOS, MediaFoundation on Windows)
+- Key methods:
+  - `configure()` - Setup decoder with VideoDecoderConfig from demuxer
+  - `decode()` - Submit EncodedVideoChunk with automatic backpressure
+  - `waitForSpace()` - Promise-based backpressure (waits for dequeue event if queue full)
+  - `canAcceptChunk()` - Check if queue has space (< maxQueueSize)
+  - `flush()` - Drain pending frames after all chunks submitted
+  - `getStats()` - Performance metrics (frames decoded, average decode time, hardware acceleration detection)
+- Configuration: maxQueueSize (default: 8), debug logging
+- Backpressure prevention: Monitors `decodeQueueSize` to prevent memory exhaustion
+- Frame callback delivers decoded VideoFrames in presentation order
+
 **Formats Supported**:
 - MP4 (H.264 video codec, AAC audio)
 - GIF (animated, adjustable frame rate and size)
