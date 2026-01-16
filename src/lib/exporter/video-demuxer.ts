@@ -9,6 +9,7 @@
 import {
   Input,
   UrlSource,
+  BlobSource,
   MP4,
   WEBM,
   MATROSKA,
@@ -98,8 +99,8 @@ export class VideoDemuxer {
     this.log('Initializing with URL:', this.config.videoUrl);
 
     try {
-      // Create source from URL
-      this.source = new UrlSource(this.config.videoUrl);
+      // Create source - use BlobSource for file:// URLs (UrlSource doesn't support them)
+      this.source = await this.createSource(this.config.videoUrl);
 
       // Create Input with supported video formats
       this.input = new Input({
@@ -261,6 +262,29 @@ export class VideoDemuxer {
     this.videoTrack = null;
     this.packetSink = null;
     this.decoderConfig = null;
+  }
+
+  /**
+   * Create appropriate Source based on URL protocol
+   * - file:// URLs: Fetch as Blob, use BlobSource (UrlSource doesn't support file://)
+   * - http(s):// URLs: Use UrlSource directly
+   */
+  private async createSource(url: string): Promise<Source> {
+    const isFileUrl = url.startsWith('file://');
+
+    if (isFileUrl) {
+      this.log('Fetching file:// URL as Blob');
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch file: ${response.status} ${response.statusText}`);
+      }
+      const blob = await response.blob();
+      this.log(`Loaded ${(blob.size / 1024 / 1024).toFixed(1)}MB as Blob`);
+      return new BlobSource(blob);
+    }
+
+    // HTTP(S) URLs work with UrlSource
+    return new UrlSource(url);
   }
 
   /**
