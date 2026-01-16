@@ -169,7 +169,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       });
       // Setup level metering with proper error handling
       try {
-        micResources.current = setupAudioLevelMeter(audioStream);
+        micResources.current = await setupAudioLevelMeter(audioStream);
         updateMicAudioLevel.current();
       } catch (audioErr) {
         console.warn('Failed to setup mic level meter:', audioErr);
@@ -227,7 +227,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
           systemAudioChunks.current = [];
           // Setup level metering with proper error handling
           try {
-            systemAudioResources.current = setupAudioLevelMeter(sysAudioStream);
+            systemAudioResources.current = await setupAudioLevelMeter(sysAudioStream);
             updateSystemAudioLevel.current();
           } catch (audioErr) {
             console.warn('Failed to setup system audio level meter:', audioErr);
