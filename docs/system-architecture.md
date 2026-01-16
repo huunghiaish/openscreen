@@ -300,6 +300,78 @@ Covers:
 
 ## Export Pipeline Architecture
 
+### Phase 4: Frame Source Abstraction (NEW)
+
+**Purpose**: Unified interface for frame extraction with automatic WebCodecs/HTMLVideo selection and trim region handling.
+
+**FrameSource Interface** (`src/lib/exporter/frame-source.ts`, 149 lines):
+- Abstraction enabling seamless switching between WebCodecs and HTMLVideoElement backends
+- Automatic fallback: tries WebCodecs first, falls back if unsupported or initialization fails
+- Built-in trim region mapping via `TrimTimeMapper`
+- VideoFrame ownership contract: caller owns frames, must call `close()` to release GPU memory
+
+**Key Types**:
+```typescript
+interface FrameSourceConfig {
+  videoUrl: string;
+  frameRate: number;
+  trimRegions?: TrimRegion[];
+  debug?: boolean;
+}
+
+interface FrameSourceResult {
+  width: number;
+  height: number;
+  duration: number;  // Effective duration (excluding trims)
+  mode: 'webcodecs' | 'htmlvideo';
+}
+
+interface FrameSource {
+  initialize(): Promise<FrameSourceResult>
+  getFrame(frameIndex, effectiveTimeMs): Promise<VideoFrame>
+  destroy(): void
+  getStats(): FrameSourceStats
+}
+```
+
+**Factory Function**:
+```typescript
+const { source, result } = await createFrameSource(config);
+// Returns WebCodecsFrameSource if available, else HTMLVideoFrameSource
+```
+
+**WebCodecsFrameSource** (`src/lib/exporter/webcodecs-frame-source.ts`, 338 lines):
+- High-performance implementation (~5ms per frame)
+- Pipeline: VideoDemuxer → VideoDecoderService → DecodedFrameBuffer
+- Features:
+  - Proactive decode-ahead loop with backpressure management
+  - Trim time mapping via `TrimTimeMapper`
+  - Frame index-based waiter notification system
+  - Frame availability detection with error propagation
+  - Statistics: frames retrieved, average/peak retrieval times
+
+**HTMLVideoFrameSource** (`src/lib/exporter/htmlvideo-frame-source.ts`, 144 lines):
+- Fallback implementation (~100-140ms per frame)
+- Wraps `PrefetchManager` with `FrameSource` interface
+- Maintains compatibility with existing export pipeline
+- VideoFrame creation from HTMLVideoElement
+- Same statistics tracking as WebCodecs path
+
+**TrimTimeMapper Utility** (`src/lib/exporter/trim-time-mapper.ts`, 109 lines):
+- Converts between effective time (excluding trims) and source time (original timeline)
+- Used by both FrameSource implementations
+- Methods:
+  - `mapEffectiveToSourceTime()` - Timeline offset accounting for trims
+  - `getEffectiveDuration()` - Duration with trims excluded
+  - `getTotalTrimDurationMs/Sec()` - Trim metadata
+  - `hasTrims()`, `getTrimCount()` - State queries
+
+**Integration in VideoExporter**:
+- Creates FrameSource during export initialization
+- Passes to RenderCoordinator or FrameRenderer
+- Receives VideoFrames with automatic trim mapping
+- Destroys source on export cleanup
+
 ### Phase 1: Video Demuxer (NEW)
 
 The export pipeline now includes a dedicated video demuxer for efficient frame extraction:

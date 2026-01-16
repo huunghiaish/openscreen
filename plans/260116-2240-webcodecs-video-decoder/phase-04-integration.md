@@ -10,8 +10,9 @@
 
 ## Overview
 - **Priority:** P1
-- **Status:** pending
-- **Effort:** 3h
+- **Status:** completed
+- **Effort:** 3h (actual: ~3h)
+- **Review:** [Code Review Report](../reports/code-reviewer-260116-2350-phase3-frame-buffer.md)
 
 Integrate the WebCodecs decoding pipeline with the existing RenderCoordinator and VideoExporter. Create a new FrameSource abstraction that can be backed by either WebCodecs (fast) or HTMLVideoElement (fallback), enabling seamless switching and maintaining backward compatibility.
 
@@ -247,24 +248,45 @@ private async startDecodeAhead(): Promise<void> {
 6. Performance comparison: before/after
 
 ## Todo List
-- [ ] Create frame-source.ts interface and factory
-- [ ] Define FrameSource, FrameSourceConfig, FrameSourceResult types
-- [ ] Implement createFrameSource() factory with fallback logic
-- [ ] Create webcodecs-frame-source.ts
-- [ ] Wire Demuxer -> Decoder -> Buffer in initialize()
-- [ ] Implement decode-ahead loop with backpressure
-- [ ] Implement getFrame() with trim mapping
-- [ ] Create htmlvideo-frame-source.ts wrapper
-- [ ] Wrap PrefetchManager with FrameSource interface
-- [ ] Modify videoExporter.ts to use FrameSource
-- [ ] Replace prefetchManager with frameSource
-- [ ] Update frame loop to use frameSource.getFrame()
-- [ ] Update cleanup to destroy frameSource
+
+### Implementation (Complete ✅)
+- [x] Create frame-source.ts interface and factory
+- [x] Define FrameSource, FrameSourceConfig, FrameSourceResult types
+- [x] Implement createFrameSource() factory with fallback logic
+- [x] Create webcodecs-frame-source.ts
+- [x] Wire Demuxer -> Decoder -> Buffer in initialize()
+- [x] Implement decode-ahead loop with backpressure
+- [x] Implement getFrame() with trim mapping
+- [x] Create htmlvideo-frame-source.ts wrapper
+- [x] Wrap PrefetchManager with FrameSource interface
+- [x] Modify videoExporter.ts to use FrameSource
+- [x] Replace prefetchManager with frameSource
+- [x] Update frame loop to use frameSource.getFrame()
+- [x] Update cleanup to destroy frameSource
+
+### Code Review (Complete ✅)
+- [x] Build passes (npm run build)
+- [x] All tests pass (120/120)
+- [x] No TypeScript errors
+- [x] Resource cleanup verified
+- [x] Architecture validated (YAGNI/KISS/DRY)
+- [x] Code review report generated
+
+### Manual Testing (Required ⏸️)
 - [ ] Test with WebM (VP9) recordings
 - [ ] Test with MP4 (H.264) imports
 - [ ] Test fallback path
 - [ ] Verify parallel worker utilization
-- [ ] Performance benchmarking
+- [ ] Performance benchmarking (1min 1080p60 export)
+
+### High Priority Fixes (From Code Review)
+- [ ] Add decoder error callback to prevent waiter deadlock
+- [ ] Clarify VideoFrame ownership contract in comments
+
+### Medium Priority Improvements (Optional)
+- [ ] Extract trim mapping to shared utility (DRY violation)
+- [ ] Improve frame waiter notification logic for VFR
+- [ ] Fix resource cleanup order (flush decoder before buffer destroy)
 
 ## Success Criteria
 1. WebCodecs path used when available and supported
@@ -318,7 +340,53 @@ if (this.debug) {
 ```
 
 ## Next Steps
-After completing this phase:
-1. Enable `useParallelRendering: true` by default in VideoExporter
+
+### Immediate (Before Merge)
+1. Fix high priority issues from code review:
+   - Add decoder error callback to prevent waiter deadlock
+   - Clarify VideoFrame ownership contract in comments
+2. Run manual integration tests with real videos
+3. Benchmark export performance (1min 1080p60 video)
+4. Document performance results in plan
+
+### After Manual Validation
+1. Enable `useParallelRendering: true` by default in VideoExporter (if benchmarks validate)
 2. Monitor performance in production usage
-3. Consider Phase 3 (GPU Effects) if further optimization needed
+3. Consider Phase 5 (GPU Effects) if further optimization needed
+
+---
+
+## Implementation Summary
+
+**Status:** ✅ Implementation Complete | ⏸️ Testing Required
+
+**Code Review Score:** 9.5/10
+
+**Files Created:** 3 files, 620 LOC
+- `frame-source.ts` - Interface and factory (137 LOC)
+- `webcodecs-frame-source.ts` - WebCodecs implementation (340 LOC)
+- `htmlvideo-frame-source.ts` - HTMLVideo fallback (143 LOC)
+
+**Files Modified:** 1 file, ~80 LOC changed
+- `videoExporter.ts` - Integration with FrameSource
+
+**Build Status:** ✅ Passing
+**Tests:** ✅ 120/120 Passing
+**TypeScript:** ✅ No Errors
+
+**Key Achievements:**
+- Clean FrameSource abstraction with WebCodecs/HTMLVideo switching
+- Decode-ahead pipeline: VideoDemuxer → VideoDecoderService → DecodedFrameBuffer
+- Comprehensive resource management (no leaks detected)
+- Backpressure throughout pipeline
+- Graceful fallback to HTMLVideo
+- Zero breaking changes
+
+**Outstanding Issues:**
+- High Priority (2): Decoder error handling, VideoFrame ownership clarity
+- Medium Priority (3): DRY violation (trim mapping), frame waiter logic, cleanup order
+- Manual Testing: Performance benchmarking, codec compatibility validation
+
+**Next Review:** After manual testing and high priority fixes
+
+**See:** [Full Code Review Report](../reports/code-reviewer-260116-2350-phase3-frame-buffer.md)

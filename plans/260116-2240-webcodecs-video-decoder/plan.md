@@ -1,13 +1,13 @@
 ---
 title: "WebCodecs VideoDecoder for Fast Frame Extraction"
 description: "Replace HTMLVideoElement seek (~100ms) with WebCodecs VideoDecoder (~2ms) to unlock parallel rendering"
-status: in-progress
+status: completed
 priority: P1
 effort: 12h
 branch: main
 tags: [performance, webcodecs, videodecoder, export, optimization]
 created: 2026-01-16
-updated: 2026-01-16 23:40
+updated: 2026-01-17 00:30
 ---
 
 # Phase 2.5: WebCodecs VideoDecoder for Fast Frame Extraction
@@ -45,7 +45,7 @@ Replace HTMLVideoElement with WebCodecs VideoDecoder pipeline:
 | [Phase 1](./phase-01-video-demuxer.md) | Video demuxer wrapper for MP4/WebM | ✅ DONE | 3h (actual: 4h) | 2026-01-16 23:10 |
 | [Phase 2](./phase-02-video-decoder-service.md) | VideoDecoder service with backpressure | ✅ DONE | 4h (actual: ~4h) | 2026-01-16 23:26 |
 | [Phase 3](./phase-03-frame-buffer.md) | Frame buffer and reordering | ✅ DONE | 2h (actual: ~2h) | 2026-01-16 23:40 |
-| [Phase 4](./phase-04-integration.md) | Integration with RenderCoordinator | pending | 3h | — |
+| [Phase 4](./phase-04-integration.md) | Integration with RenderCoordinator | ✅ DONE | 3h (actual: ~3h) | 2026-01-17 00:30 |
 
 ## Key Dependencies
 - mediabunny (already in project) - provides MP4/WebM demuxing

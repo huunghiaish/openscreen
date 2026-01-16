@@ -6,6 +6,8 @@ import { VideoMuxer } from './muxer';
 import { EncodeQueue } from './encode-queue';
 import { PrefetchManager } from './prefetch-manager';
 import { RenderCoordinator } from './render-coordinator';
+import { createFrameSource, type FrameSource } from './frame-source';
+import { TrimTimeMapper } from './trim-time-mapper';
 import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion, CameraPipConfig } from '@/components/video-editor/types';
 
 interface VideoExporterConfig extends ExportConfig {
@@ -44,8 +46,12 @@ export class VideoExporter {
   private cancelled = false;
   // Event-driven encode queue (replaces busy-wait with Promise backpressure)
   private encodeQueueManager: EncodeQueue;
-  // Prefetch manager for dual video element frame extraction
+  // Prefetch manager for dual video element frame extraction (fallback only)
   private prefetchManager: PrefetchManager | null = null;
+  // FrameSource abstraction (WebCodecs or HTMLVideo fallback)
+  private frameSource: FrameSource | null = null;
+  // Trim time mapper for effective<->source time conversion
+  private trimMapper: TrimTimeMapper;
   private videoDescription: Uint8Array | undefined;
   private videoColorSpace: VideoColorSpaceInit | undefined;
   // Track muxing promises for parallel processing
@@ -72,36 +78,12 @@ export class VideoExporter {
     // Audio: 8 frames for audio chunks
     this.encodeQueueManager = new EncodeQueue({ maxSize: 6 });
     this.audioEncodeQueueManager = new EncodeQueue({ maxSize: 8 });
-  }
-
-  // Calculate the total duration excluding trim regions (in seconds)
-  private getEffectiveDuration(totalDuration: number): number {
-    const trimRegions = this.config.trimRegions || [];
-    const totalTrimDuration = trimRegions.reduce((sum, region) => {
-      return sum + (region.endMs - region.startMs) / 1000;
-    }, 0);
-    return totalDuration - totalTrimDuration;
+    // Initialize trim mapper for time conversion
+    this.trimMapper = new TrimTimeMapper(config.trimRegions);
   }
 
   private mapEffectiveToSourceTime(effectiveTimeMs: number): number {
-    const trimRegions = this.config.trimRegions || [];
-    // Sort trim regions by start time
-    const sortedTrims = [...trimRegions].sort((a, b) => a.startMs - b.startMs);
-
-    let sourceTimeMs = effectiveTimeMs;
-
-    for (const trim of sortedTrims) {
-      // If the source time hasn't reached this trim region yet, we're done
-      if (sourceTimeMs < trim.startMs) {
-        break;
-      }
-
-      // Add the duration of this trim region to the source time
-      const trimDuration = trim.endMs - trim.startMs;
-      sourceTimeMs += trimDuration;
-    }
-
-    return sourceTimeMs;
+    return this.trimMapper.mapEffectiveToSourceTime(effectiveTimeMs);
   }
 
   async export(): Promise<ExportResult> {
@@ -111,14 +93,15 @@ export class VideoExporter {
       this.exportStartTime = performance.now();
       this.frameTimings = [];
 
-      // Initialize prefetch manager with dual video elements
-      this.prefetchManager = new PrefetchManager({
+      // Initialize FrameSource (tries WebCodecs first, falls back to HTMLVideo)
+      const { source: frameSource, result: videoInfo } = await createFrameSource({
         videoUrl: this.config.videoUrl,
-        trimRegions: this.config.trimRegions,
         frameRate: this.config.frameRate,
+        trimRegions: this.config.trimRegions,
         debug: false,
       });
-      const videoInfo = await this.prefetchManager.initialize();
+      this.frameSource = frameSource;
+      console.log(`[VideoExporter] Using ${videoInfo.mode} frame source`);
 
       // Also initialize decoder for compatibility (some features may still need it)
       this.decoder = new VideoFileDecoder();
@@ -207,14 +190,12 @@ export class VideoExporter {
         await this.initializeAudioEncoder();
       }
 
-      // Calculate effective duration and frame count (excluding trim regions)
-      const effectiveDuration = this.getEffectiveDuration(videoInfo.duration);
+      // FrameSource.initialize() returns effective duration (already excludes trims)
+      const effectiveDuration = videoInfo.duration;
       const totalFrames = Math.ceil(effectiveDuration * this.config.frameRate);
 
-      console.log('[VideoExporter] Original duration:', videoInfo.duration, 's');
       console.log('[VideoExporter] Effective duration:', effectiveDuration, 's');
       console.log('[VideoExporter] Total frames to export:', totalFrames);
-      console.log('[VideoExporter] Using prefetch manager with dual video elements');
 
       // Process frames with prefetch-based pipeline (overlaps seek latency)
       const frameDuration = 1_000_000 / this.config.frameRate; // in microseconds
@@ -242,14 +223,11 @@ export class VideoExporter {
         // Submit all frames to coordinator
         for (let frameIndex = 0; frameIndex < totalFrames && !this.cancelled; frameIndex++) {
           const frameStartTime = performance.now();
-          const timestamp = frameIndex * frameDuration;
           const effectiveTimeMs = frameIndex * timeStep * 1000;
 
-          // Get prefetched video element
-          const videoElement = await this.prefetchManager!.getFrame(frameIndex, effectiveTimeMs);
-
-          // Create VideoFrame from video element
-          const videoFrame = new VideoFrame(videoElement, { timestamp });
+          // Get video frame from FrameSource (WebCodecs or HTMLVideo fallback)
+          // FrameSource returns VideoFrame directly with correct timestamp
+          const videoFrame = await this.frameSource!.getFrame(frameIndex, effectiveTimeMs);
 
           // Map effective -> source timestamp for zoom animation
           const sourceTimeMs = this.mapEffectiveToSourceTime(effectiveTimeMs);
@@ -283,26 +261,22 @@ export class VideoExporter {
         await this.renderCoordinator.waitForPending();
         await this.renderCoordinator.flush();
 
-        // Log coordinator stats
+        // Log coordinator and frame source stats
         const coordStats = this.renderCoordinator.getStats();
+        const frameSourceStats = this.frameSource?.getStats();
         console.log('[VideoExporter] Parallel rendering stats:', coordStats);
+        console.log('[VideoExporter] Frame source stats:', frameSourceStats);
       } else {
-        // Single-threaded mode: existing behavior
+        // Single-threaded mode: use FrameSource for frame extraction
         for (let frameIndex = 0; frameIndex < totalFrames && !this.cancelled; frameIndex++) {
           const frameStartTime = performance.now();
           const timestamp = frameIndex * frameDuration;
           const effectiveTimeMs = frameIndex * timeStep * 1000;
 
-          // Get prefetched video element (handles seek timing overlap)
-          const videoElement = await this.prefetchManager!.getFrame(frameIndex, effectiveTimeMs);
-
-          // Create a VideoFrame from the video element (on GPU!)
-          const videoFrame = new VideoFrame(videoElement, {
-            timestamp,
-          });
+          // Get video frame from FrameSource (WebCodecs or HTMLVideo fallback)
+          const videoFrame = await this.frameSource!.getFrame(frameIndex, effectiveTimeMs);
 
           // Render the frame with all effects using source timestamp
-          // PrefetchManager already mapped effective -> source time internally
           const sourceTimeMs = this.mapEffectiveToSourceTime(effectiveTimeMs);
           const sourceTimestamp = sourceTimeMs * 1000; // Convert to microseconds
           await this.renderer!.renderFrame(videoFrame, sourceTimestamp);
@@ -733,14 +707,14 @@ export class VideoExporter {
       const avgFrameTime = this.frameTimings.reduce((a, b) => a + b, 0) / this.frameTimings.length;
       const totalTime = (performance.now() - this.exportStartTime) / 1000;
       const encodeStats = this.encodeQueueManager.getStats();
-      const prefetchStats = this.prefetchManager?.getStats();
+      const frameSourceStats = this.frameSource?.getStats();
 
       console.log('[VideoExporter] Export telemetry:');
       console.log(`  - Total time: ${totalTime.toFixed(2)}s`);
       console.log(`  - Avg frame time: ${avgFrameTime.toFixed(2)}ms`);
       console.log(`  - Encode queue: peak=${encodeStats.peakSize}, waits=${encodeStats.totalWaits}`);
-      if (prefetchStats) {
-        console.log(`  - Prefetch: hits=${prefetchStats.prefetchHits}, misses=${prefetchStats.prefetchMisses}, hitRate=${(prefetchStats.hitRate * 100).toFixed(1)}%`);
+      if (frameSourceStats) {
+        console.log(`  - Frame source: avg=${frameSourceStats.averageRetrievalTime.toFixed(2)}ms, peak=${frameSourceStats.peakRetrievalTime.toFixed(2)}ms`);
       }
     }
 
@@ -767,7 +741,17 @@ export class VideoExporter {
       this.audioEncoder = null;
     }
 
-    // Clean up prefetch manager
+    // Clean up frame source (WebCodecs or HTMLVideo)
+    if (this.frameSource) {
+      try {
+        this.frameSource.destroy();
+      } catch (e) {
+        console.warn('Error destroying frame source:', e);
+      }
+      this.frameSource = null;
+    }
+
+    // Clean up prefetch manager (legacy, may still be used in some paths)
     if (this.prefetchManager) {
       try {
         this.prefetchManager.destroy();

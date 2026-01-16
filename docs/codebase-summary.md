@@ -216,14 +216,50 @@ const {
 **Location**: `src/lib/exporter/`
 
 **Core Modules**:
-- `VideoDemuxer` - Container demuxing and frame extraction (Phase 1 - NEW)
+- `FrameSource` - Abstraction layer (Phase 4 - NEW)
+  - `frame-source.ts` - Interface, types, factory function
+  - `webcodecs-frame-source.ts` - WebCodecs implementation (~5ms/frame)
+  - `htmlvideo-frame-source.ts` - HTMLVideoElement fallback (~100ms/frame)
+  - `trim-time-mapper.ts` - Time mapping utility for trim regions
+- `VideoDemuxer` - Container demuxing and frame extraction (Phase 1)
+- `VideoDecoderService` - WebCodecs decoding with backpressure (Phase 2)
+- `DecodedFrameBuffer` - Memory-bounded frame buffer (Phase 3)
 - `VideoExporter` - MP4 export with mediabunny and mp4box
 - `GifExporter` - Animated GIF export with gif.js
 - Frame rendering utilities for image-based exports
 - Parallel rendering with Web Workers (Phase 2)
 - Audio decoders for microphone and system audio mixing
 
-**Video Demuxer** (NEW):
+**FrameSource Abstraction** (NEW - Phase 4):
+- Files:
+  - `frame-source.ts` (149 lines) - Interface, config, factory
+  - `webcodecs-frame-source.ts` (338 lines) - Fast implementation
+  - `htmlvideo-frame-source.ts` (144 lines) - Fallback implementation
+  - `trim-time-mapper.ts` (109 lines) - Time conversion utility
+- Purpose: Unified frame extraction API with automatic WebCodecs/HTMLVideo selection
+- Interface:
+  - `initialize()` - Setup and return video metadata
+  - `getFrame(frameIndex, effectiveTimeMs)` - Get frame at index
+  - `getStats()` - Performance metrics
+  - `destroy()` - Cleanup resources
+- Factory:
+  - `createFrameSource(config)` - Auto-select best implementation
+  - Returns `{ source, result: FrameSourceResult }`
+- WebCodecs path:
+  - Pipeline: VideoDemuxer → VideoDecoderService → DecodedFrameBuffer
+  - Decode-ahead loop for proactive frame buffering
+  - Backpressure management via frame waiters
+  - Performance: <5ms per frame average
+- HTMLVideo fallback:
+  - Wraps existing `PrefetchManager`
+  - VideoFrame creation from video element
+  - Performance: ~100-140ms per frame
+- TrimTimeMapper:
+  - Converts effective time (no trims) ↔ source time (original timeline)
+  - Methods: `mapEffectiveToSourceTime()`, `getEffectiveDuration()`
+  - Used by both FrameSource implementations
+
+**Video Demuxer** (Phase 1):
 - Class: `VideoDemuxer` wraps mediabunny for container format handling
 - Supports: MP4, WebM, Matroska, QuickTime containers
 - Key methods:
@@ -366,7 +402,30 @@ npm run test:watch       # Watch mode tests
 
 `@/` maps to `src/` (configured in `vite.config.ts`)
 
-## Recent Changes (as of 2026-01-14)
+## Recent Changes (as of 2026-01-17)
+
+**Phase 04: Frame Source Integration (WebCodecs)** (COMPLETE)
+- New `FrameSource` abstraction layer for unified frame extraction
+  - `frame-source.ts` (149 lines) - Interface, config types, factory function
+  - `webcodecs-frame-source.ts` (338 lines) - WebCodecs VideoDecoder implementation
+  - `htmlvideo-frame-source.ts` (144 lines) - HTMLVideoElement fallback
+  - `trim-time-mapper.ts` (109 lines) - Time mapping utility for trim regions
+- Features:
+  - Automatic selection: tries WebCodecs first, falls back to HTMLVideo if unsupported
+  - Unified `FrameSource` interface with `getFrame()`, `initialize()`, `destroy()`, `getStats()`
+  - WebCodecs pipeline: VideoDemuxer → VideoDecoderService → DecodedFrameBuffer
+  - Proactive decode-ahead loop with frame waiter notification system
+  - Trim region handling via TrimTimeMapper (converts effective ↔ source time)
+  - VideoFrame ownership contract: caller responsible for `frame.close()`
+  - Performance: <5ms per frame (WebCodecs) vs ~100ms (HTMLVideo fallback)
+- Integration in `VideoExporter`:
+  - Uses `createFrameSource()` factory during export initialization
+  - Automatically handles mode detection and metrics collection
+  - Passes frames to RenderCoordinator or FrameRenderer
+  - Cleanup via `frameSource.destroy()` on export completion
+- Statistics:
+  - Frames retrieved, average/peak retrieval times
+  - Mode-specific stats (decoder, buffer, or prefetch metrics)
 
 **Phase 05: HUD UI Device Selectors** (COMPLETE)
 - New `device-dropdown.tsx` reusable dropdown component (246 lines)
