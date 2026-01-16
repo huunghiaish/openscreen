@@ -106,6 +106,9 @@ function updateTrayMenu(recording: boolean = false) {
 }
 
 function createEditorWindowWrapper() {
+  // Hide camera overlay when opening editor
+  hideCameraOverlayWindowWrapper()
+
   if (mainWindow) {
     mainWindow.close()
     mainWindow = null

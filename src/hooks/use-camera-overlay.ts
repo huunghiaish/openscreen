@@ -62,21 +62,18 @@ export function useCameraOverlay({
     }
   }, [recording, cameraEnabled, cameraDeviceId, previewEnabled]);
 
-  // Handle recording state changes
+  // Handle recording stop - hide overlay when recording ends
   useEffect(() => {
     const wasRecording = prevRecordingRef.current;
     prevRecordingRef.current = recording;
 
-    const api = getCameraOverlayAPI();
-
-    if (recording && !wasRecording && cameraEnabled && cameraDeviceId && previewEnabled) {
-      // Recording just started with camera enabled and preview on
-      api.showCameraOverlay?.(cameraDeviceId);
-    } else if (!recording && wasRecording) {
-      // Recording just stopped - always hide overlay
+    // When recording stops, hide overlay (editor will show its own camera preview)
+    // When recording starts, keep existing overlay as-is to avoid camera stream conflicts
+    if (!recording && wasRecording) {
+      const api = getCameraOverlayAPI();
       api.hideCameraOverlay?.();
     }
-  }, [recording, cameraEnabled, cameraDeviceId, previewEnabled]);
+  }, [recording]);
 
   // Handle preview toggle (only when not recording)
   useEffect(() => {
