@@ -124,6 +124,14 @@ export class PrefetchManager {
         console.log(`[PrefetchManager] Prefetch HIT for frame ${frameIndex}`);
       }
 
+      // Verify video is in valid state for VideoFrame creation
+      // readyState >= 2 (HAVE_CURRENT_DATA) means we have frame data
+      if (result.videoElement.readyState < 2) {
+        console.warn(`[PrefetchManager] Prefetch hit but video not ready (readyState=${result.videoElement.readyState}), re-seeking`);
+        await this.seekTo(result.videoElement, videoTime);
+        await this.waitForVideoReady(result.videoElement);
+      }
+
       // Start prefetching next frame on the other element
       this.startPrefetch(frameIndex + 1);
 
@@ -141,10 +149,41 @@ export class PrefetchManager {
     const currentVideo = this.currentElement === 'A' ? this.videoA : this.videoB;
     await this.seekTo(currentVideo, videoTime);
 
+    // Ensure video is ready for VideoFrame creation
+    if (currentVideo.readyState < 2) {
+      await this.waitForVideoReady(currentVideo);
+    }
+
     // Start prefetching next frame on the other element
     this.startPrefetch(frameIndex + 1);
 
     return currentVideo;
+  }
+
+  /**
+   * Wait for video to have enough data for frame extraction.
+   */
+  private async waitForVideoReady(video: HTMLVideoElement, timeoutMs = 2000): Promise<void> {
+    if (video.readyState >= 2) return;
+
+    return new Promise<void>((resolve) => {
+      const startTime = Date.now();
+
+      const checkReady = () => {
+        if (video.readyState >= 2) {
+          resolve();
+          return;
+        }
+        if (Date.now() - startTime > timeoutMs) {
+          console.warn('[PrefetchManager] Timeout waiting for video ready');
+          resolve();
+          return;
+        }
+        requestAnimationFrame(checkReady);
+      };
+
+      checkReady();
+    });
   }
 
   /**
