@@ -66,6 +66,18 @@ electron.contextBridge.exposeInMainWorld("electronAPI", {
   getCameraVideoPath: (mainVideoPath) => {
     return electron.ipcRenderer.invoke("get-camera-video-path", mainVideoPath);
   },
+  getMicAudioPath: (mainVideoPath) => {
+    return electron.ipcRenderer.invoke("get-mic-audio-path", mainVideoPath);
+  },
+  getSystemAudioPath: (mainVideoPath) => {
+    return electron.ipcRenderer.invoke("get-system-audio-path", mainVideoPath);
+  },
+  storeAudioRecording: (audioData, fileName) => {
+    return electron.ipcRenderer.invoke("store-audio-recording", audioData, fileName);
+  },
+  storeSystemAudioRecording: (audioData, fileName) => {
+    return electron.ipcRenderer.invoke("store-system-audio-recording", audioData, fileName);
+  },
   showCameraOverlay: (deviceId) => {
     return electron.ipcRenderer.invoke("show-camera-overlay", deviceId);
   },

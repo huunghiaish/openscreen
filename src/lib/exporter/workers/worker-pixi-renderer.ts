@@ -248,9 +248,6 @@ export class WorkerPixiRenderer {
       }
     }
 
-    // Close the input VideoFrame after creating texture
-    videoFrame.close();
-
     // Apply layout and animation
     this.updateLayout();
 
@@ -275,6 +272,9 @@ export class WorkerPixiRenderer {
 
     // Render PixiJS stage to offscreen canvas
     this.app.renderer.render(this.app.stage);
+
+    // Close the input VideoFrame AFTER rendering (texture has been uploaded to GPU)
+    videoFrame.close();
 
     // Composite with background and shadows
     this.compositeWithShadows();

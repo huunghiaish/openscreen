@@ -26,3 +26,4 @@ release/**
 *.kiro/
 # npx electron-builder --mac --win
 .claude
+.opencode

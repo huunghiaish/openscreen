@@ -15,17 +15,17 @@ ipcMain.on("hud-overlay-hide", () => {
 function createHudOverlayWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { workArea } = primaryDisplay;
-  const windowWidth = 500;
-  const windowHeight = 100;
+  const windowWidth = 720;
+  const windowHeight = 400;
   const x = Math.floor(workArea.x + (workArea.width - windowWidth) / 2);
   const y = Math.floor(workArea.y + workArea.height - windowHeight - 5);
   const win = new BrowserWindow({
     width: windowWidth,
     height: windowHeight,
-    minWidth: 500,
-    maxWidth: 500,
-    minHeight: 100,
-    maxHeight: 100,
+    minWidth: 720,
+    maxWidth: 720,
+    minHeight: 400,
+    maxHeight: 400,
     x,
     y,
     frame: false,
@@ -152,6 +152,39 @@ function createCameraOverlayWindow() {
   return win;
 }
 let selectedSource = null;
+const MAX_VIDEO_SIZE = 5 * 1024 * 1024 * 1024;
+const MAX_CAMERA_SIZE = 500 * 1024 * 1024;
+const MAX_AUDIO_SIZE = 100 * 1024 * 1024;
+const MAX_SYSTEM_AUDIO_SIZE = 100 * 1024 * 1024;
+function validateRecordingFileName(fileName, allowedExtensions) {
+  const baseName = path.basename(fileName);
+  const validPattern = /^(recording|camera|mic|system-audio)-\d{13,14}\.[a-z0-9]+$/;
+  if (!validPattern.test(baseName)) {
+    return null;
+  }
+  const ext = path.extname(baseName).toLowerCase().slice(1);
+  if (!allowedExtensions.includes(ext)) {
+    return null;
+  }
+  return baseName;
+}
+async function safeWriteRecording(targetDir, fileName, data, maxSize, allowedExtensions) {
+  if (data.byteLength > maxSize) {
+    return { success: false, error: `File too large (max ${Math.round(maxSize / 1024 / 1024)}MB)` };
+  }
+  const safeName = validateRecordingFileName(fileName, allowedExtensions);
+  if (!safeName) {
+    return { success: false, error: "Invalid filename format" };
+  }
+  const targetPath = path.join(targetDir, safeName);
+  const resolvedPath = path.resolve(targetPath);
+  const resolvedDir = path.resolve(targetDir);
+  if (!resolvedPath.startsWith(resolvedDir + path.sep)) {
+    return { success: false, error: "Invalid file path" };
+  }
+  await fs.writeFile(resolvedPath, Buffer.from(data));
+  return { success: true, path: resolvedPath };
+}
 function registerIpcHandlers(createEditorWindow2, createSourceSelectorWindow2, getMainWindow, getSourceSelectorWindow, onRecordingStateChange, showCameraOverlay, hideCameraOverlay) {
   ipcMain.handle("get-sources", async (_, opts) => {
     const sources = await desktopCapturer.getSources(opts);
@@ -191,14 +224,18 @@ function registerIpcHandlers(createEditorWindow2, createSourceSelectorWindow2, g
   });
   ipcMain.handle("store-recorded-video", async (_, videoData, fileName) => {
     try {
-      const videoPath = path.join(RECORDINGS_DIR, fileName);
-      await fs.writeFile(videoPath, Buffer.from(videoData));
-      currentVideoPath = videoPath;
-      return {
-        success: true,
-        path: videoPath,
-        message: "Video stored successfully"
-      };
+      const result = await safeWriteRecording(
+        RECORDINGS_DIR,
+        fileName,
+        videoData,
+        MAX_VIDEO_SIZE,
+        ["webm", "mp4", "mov"]
+      );
+      if (result.success && result.path) {
+        currentVideoPath = result.path;
+        return { ...result, message: "Video stored successfully" };
+      }
+      return { ...result, message: result.error || "Failed to store video" };
     } catch (error) {
       console.error("Failed to store video:", error);
       return {
@@ -337,11 +374,43 @@ function registerIpcHandlers(createEditorWindow2, createSourceSelectorWindow2, g
   });
   ipcMain.handle("store-camera-recording", async (_, videoData, fileName) => {
     try {
-      const videoPath = path.join(RECORDINGS_DIR, fileName);
-      await fs.writeFile(videoPath, Buffer.from(videoData));
-      return { success: true, path: videoPath };
+      return await safeWriteRecording(
+        RECORDINGS_DIR,
+        fileName,
+        videoData,
+        MAX_CAMERA_SIZE,
+        ["webm", "mp4", "mov"]
+      );
     } catch (error) {
       console.error("Failed to store camera recording:", error);
+      return { success: false, error: String(error) };
+    }
+  });
+  ipcMain.handle("store-audio-recording", async (_, audioData, fileName) => {
+    try {
+      return await safeWriteRecording(
+        RECORDINGS_DIR,
+        fileName,
+        audioData,
+        MAX_AUDIO_SIZE,
+        ["webm"]
+      );
+    } catch (error) {
+      console.error("Failed to store audio recording:", error);
+      return { success: false, error: String(error) };
+    }
+  });
+  ipcMain.handle("store-system-audio-recording", async (_, audioData, fileName) => {
+    try {
+      return await safeWriteRecording(
+        RECORDINGS_DIR,
+        fileName,
+        audioData,
+        MAX_SYSTEM_AUDIO_SIZE,
+        ["webm"]
+      );
+    } catch (error) {
+      console.error("Failed to store system audio recording:", error);
       return { success: false, error: String(error) };
     }
   });
@@ -363,6 +432,56 @@ function registerIpcHandlers(createEditorWindow2, createSourceSelectorWindow2, g
       try {
         await fs.access(cameraPath);
         return { success: true, path: cameraPath };
+      } catch {
+        return { success: false, path: null };
+      }
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
+  ipcMain.handle("get-mic-audio-path", async (_, mainVideoPath) => {
+    try {
+      const filename = path.basename(mainVideoPath);
+      const match = filename.match(/recording-(\d+)\.webm$/);
+      if (!match) {
+        return { success: false, path: null };
+      }
+      const timestamp = match[1];
+      const micFileName = `mic-${timestamp}.webm`;
+      const micPath = path.join(RECORDINGS_DIR, micFileName);
+      const resolvedPath = path.resolve(micPath);
+      const resolvedRecordingsDir = path.resolve(RECORDINGS_DIR);
+      if (!resolvedPath.startsWith(resolvedRecordingsDir + path.sep)) {
+        return { success: false, path: null };
+      }
+      try {
+        await fs.access(micPath);
+        return { success: true, path: micPath };
+      } catch {
+        return { success: false, path: null };
+      }
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
+  ipcMain.handle("get-system-audio-path", async (_, mainVideoPath) => {
+    try {
+      const filename = path.basename(mainVideoPath);
+      const match = filename.match(/recording-(\d+)\.webm$/);
+      if (!match) {
+        return { success: false, path: null };
+      }
+      const timestamp = match[1];
+      const systemAudioFileName = `system-audio-${timestamp}.webm`;
+      const systemAudioPath = path.join(RECORDINGS_DIR, systemAudioFileName);
+      const resolvedPath = path.resolve(systemAudioPath);
+      const resolvedRecordingsDir = path.resolve(RECORDINGS_DIR);
+      if (!resolvedPath.startsWith(resolvedRecordingsDir + path.sep)) {
+        return { success: false, path: null };
+      }
+      try {
+        await fs.access(systemAudioPath);
+        return { success: true, path: systemAudioPath };
       } catch {
         return { success: false, path: null };
       }
@@ -443,6 +562,7 @@ function updateTrayMenu(recording = false) {
   tray.setContextMenu(Menu.buildFromTemplate(menuTemplate));
 }
 function createEditorWindowWrapper() {
+  hideCameraOverlayWindowWrapper();
   if (mainWindow) {
     mainWindow.close();
     mainWindow = null;

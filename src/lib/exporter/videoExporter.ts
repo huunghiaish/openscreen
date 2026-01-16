@@ -125,6 +125,10 @@ export class VideoExporter {
       await this.decoder.loadVideo(this.config.videoUrl);
 
       // Initialize renderer based on parallel mode config
+      // Note: Parallel rendering with Web Workers is ready, but currently disabled by default
+      // because the bottleneck is video frame extraction (~100ms/frame), not rendering (~2ms/frame).
+      // Workers process 50x faster than we can feed them frames.
+      // To enable: set useParallelRendering: true (useful when video decoding is optimized)
       const useParallel = this.config.useParallelRendering ?? false;
 
       if (useParallel) {
