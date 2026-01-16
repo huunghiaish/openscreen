@@ -298,9 +298,18 @@ Covers:
 - Security considerations
 - Performance notes
 
-## Export Pipeline Architecture (Phase 1: Frame Pipeline Optimization)
+## Export Pipeline Architecture
 
-### Overview
+### Phase 2: Parallel Rendering Workers
+
+The export pipeline uses Web Workers for parallel frame rendering:
+1. **Worker Pool** (4 workers, fixed pool size per validation)
+2. **Frame Distribution** via RenderCoordinator
+3. **In-Order Reassembly** via FrameReassembler
+4. **Zero-Copy Transfer** of VideoFrame objects
+5. **Graceful Fallback** to single-threaded rendering if workers unavailable
+
+### Phase 1: Frame Pipeline Optimization
 
 The export pipeline has been optimized to eliminate busy-wait polling and reduce memory churn through:
 1. **Promise-based backpressure** via EncodeQueue (replaces busy-wait)
@@ -309,10 +318,82 @@ The export pipeline has been optimized to eliminate busy-wait polling and reduce
 4. **AbortController cleanup** (prevents deadlocks on seek timeout)
 5. **Performance telemetry** (tracks queue depth, prefetch hits, seek counts)
 
-### Frame Pipeline Flow
+### Parallel Rendering Flow (Phase 2)
 
 ```
-VideoExporter / GifExporter
+VideoExporter / GifExporter (with useParallelRendering: true)
+│
+├─ Initialize components
+│  ├─ RenderCoordinator (with WorkerPool)
+│  │  ├─ WorkerPool (4 workers, fixed count)
+│  │  │  ├─ Worker 0-3: Web Worker instances
+│  │  │  ├─ OffscreenCanvas per worker
+│  │  │  └─ PixiJS renderer in each worker
+│  │  ├─ FrameReassembler (collects rendered frames in-order)
+│  │  └─ Fallback: Single-threaded FrameRenderer if workers fail
+│  │
+│  ├─ EncodeQueue (Promise backpressure, max: 6 frames)
+│  ├─ PrefetchManager (dual video elements for overlap)
+│  ├─ AudioFileDecoders (mic, system)
+│  └─ VideoEncoder + AudioEncoder
+│
+├─ Main export loop (per frame)
+│  │
+│  ├─ Await EncodeQueue.waitForSpace()
+│  │  └─ Returns immediately if space, else Promise backpressure
+│  │
+│  ├─ Get frame via PrefetchManager.getFrame()
+│  │  ├─ Check if prefetched frame available (overlap from prev iteration)
+│  │  ├─ If prefetch miss: Seek synchronously with 5s timeout
+│  │  └─ Start async prefetch of next frame on alternate video element
+│  │
+│  ├─ Distribute to RenderCoordinator.renderFrame()
+│  │  ├─ If parallel mode:
+│  │  │  ├─ Find idle worker from pool
+│  │  │  ├─ Send render config + frame data via postMessage
+│  │  │  ├─ Transfer VideoFrame as Transferable (zero-copy)
+│  │  │  └─ Track pending render with index
+│  │  │
+│  │  └─ If fallback mode:
+│  │     └─ Single-threaded FrameRenderer.render()
+│  │
+│  ├─ FrameReassembler collects rendered frames
+│  │  ├─ Wait for frames in-order (index 0, 1, 2, ...)
+│  │  ├─ Buffer out-of-order arrivals (max 32 frames)
+│  │  └─ Emit ordered frames for encoding
+│  │
+│  ├─ Submit frame to VideoEncoder
+│  ├─ Increment EncodeQueue.increment()
+│  │
+│  └─ Process pending audio frames (mixed mic + system audio)
+│     ├─ Mix audio buffers asynchronously
+│     ├─ Encode audio chunk
+│     └─ Await AudioEncodeQueue.waitForSpace() for backpressure
+│
+├─ Encoder output loop (runs in parallel)
+│  ├─ VideoEncoder.output callback fires
+│  │  ├─ Receive encoded chunk
+│  │  ├─ Queue for muxing
+│  │  └─ Call EncodeQueue.onChunkOutput() (unblocks waitForSpace)
+│  │
+│  └─ AudioEncoder.output callback fires
+│     └─ Similar flow for audio chunks
+│
+├─ Mux final frames with audio tracks
+│  └─ Combined MP4 output
+│
+└─ Performance reporting
+   ├─ RenderCoordinator stats: parallel/fallback mode, worker pool stats
+   ├─ FrameReassembler stats: buffer size, out-of-order frames
+   ├─ PrefetchManager stats: seekCount, prefetchHits, prefetchMisses, hitRate
+   ├─ EncodeQueue stats: peakSize, totalEncoded, totalWaits, pendingWaits
+   └─ Total timings for optimization tracking
+```
+
+### Frame Pipeline Flow (Phase 1)
+
+```
+VideoExporter / GifExporter (with useParallelRendering: false)
 │
 ├─ Initialize components
 │  ├─ FrameRenderer (with texture caching)
@@ -446,6 +527,130 @@ if (oldTexture !== newTexture && oldTexture !== Texture.EMPTY) {
 - Reduces GPU memory churn per frame
 - Reuses texture memory more efficiently
 - Improves frame submission throughput
+
+#### WorkerPool (NEW - Phase 2)
+
+**Location**: `src/lib/exporter/worker-pool.ts`
+
+**Purpose**: Manages pool of 4 Web Workers for parallel frame rendering.
+
+**Key Features**:
+- Fixed worker count: 4 workers (validated as optimal for M4)
+- Worker state tracking: busy/idle status per worker
+- OffscreenCanvas per worker: Isolated rendering surfaces
+- Error propagation: Worker crashes don't deadlock pipeline
+- Graceful shutdown: Cleanup all workers on destroy
+
+**Public Methods**:
+- `constructor(config: WorkerPoolConfig)` - Initialize pool config
+- `async initialize(renderConfig)` - Create workers and send init messages
+- `async renderFrame(frameIndex, renderRequest)` - Dispatch frame to idle worker
+- `async waitForIdle()` - Block until worker available
+- `getStats(): WorkerPoolStats` - Query pool performance metrics
+- `destroy()` - Cleanup all workers and listeners
+
+**Worker Lifecycle**:
+1. Create Worker from bundled `render-worker.ts`
+2. Create OffscreenCanvas with render dimensions
+3. Send init message with canvas + render config (Transferable)
+4. Worker sets up PixiJS renderer with OffscreenCanvas
+5. Send render requests with frame data as Transferable
+6. Worker processes frame and sends back rendered canvas
+7. Main thread receives rendered frame and marks worker idle
+8. On destroy: Terminate all workers
+
+#### RenderCoordinator (NEW - Phase 2)
+
+**Location**: `src/lib/exporter/render-coordinator.ts`
+
+**Purpose**: Orchestrates parallel rendering with fallback to single-threaded.
+
+**Key Features**:
+- Parallel/fallback modes (automatic detection)
+- Frame distribution to worker pool
+- In-order frame reassembly
+- Zero-copy VideoFrame transfer
+- Graceful degradation if workers unavailable
+
+**Public Methods**:
+- `constructor(config: RenderCoordinatorConfig)` - Initialize with render settings
+- `async initialize()` - Setup workers (with fallback)
+- `async renderFrame(frameIndex, sourceFrame)` - Distribute frame to pool
+- `async waitForAllFrames()` - Block until all pending renders complete
+- `getStats(): CoordinatorStats` - Query rendering stats
+- `destroy()` - Cleanup all resources
+
+**Fallback Strategy**:
+- Checks for Worker support via `typeof Worker`
+- Initializes single-threaded FrameRenderer if workers unavailable
+- Transparently switches modes (parallel vs. fallback)
+- Reports stats with `mode: 'parallel' | 'fallback'`
+
+#### FrameReassembler (NEW - Phase 2)
+
+**Location**: `src/lib/exporter/frame-reassembler.ts`
+
+**Purpose**: Collects out-of-order rendered frames and emits in-order.
+
+**Key Features**:
+- In-order collection: Guarantees frame sequence (index 0, 1, 2, ...)
+- Out-of-order buffering: Holds frames arriving ahead of sequence
+- Max buffer size: 32 frames (prevents unbounded growth)
+- Automatic emission: Yields frames as soon as sequence is available
+- Performance tracking: Buffers size, out-of-order counts
+
+**Public Methods**:
+- `async addFrame(frameIndex, frame)` - Collect rendered frame
+- `async getNextFrame()` - Block until next in-sequence frame available
+- `getStats(): ReassemblerStats` - Query reassembler metrics
+- `reset()` - Clear state for new export session
+
+**Buffering Example**:
+```
+Received: [0, 2, 1, 3, ...]
+Expected sequence: 0, 1, 2, 3
+
+Step 1: addFrame(0, data) → emit immediately → nextExpected = 1
+Step 2: addFrame(2, data) → buffer (ahead of sequence)
+Step 3: addFrame(1, data) → emit → emit buffered[2] → nextExpected = 3
+Step 4: addFrame(3, data) → emit → nextExpected = 4
+```
+
+#### Worker Types & Messages (NEW - Phase 2)
+
+**Location**: `src/lib/exporter/workers/worker-types.ts`
+
+**Key Types**:
+- `WorkerRenderConfig` - Render settings (canvas size, effects, regions)
+- `WorkerRenderRequest` - Single frame render request (frameIndex, sourceFrame)
+- `RenderedWorkerResponse` - Rendered frame result (frameIndex, canvas, transferable)
+- `WorkerToMainMessage` - Union of all worker→main messages
+
+**Message Protocol**:
+1. Main → Worker: `{ type: 'INIT', renderConfig, canvas }` (Transferable)
+2. Worker → Main: `{ type: 'READY' }`
+3. Main → Worker: `{ type: 'RENDER', renderRequest, sourceFrame }` (Transferable)
+4. Worker → Main: `{ type: 'RENDERED', frameIndex, canvas }` (Transferable)
+
+#### Worker Entry Point (NEW - Phase 2)
+
+**Location**: `src/lib/exporter/workers/render-worker.ts`
+
+**Purpose**: Web Worker entry point that sets up PixiJS renderer.
+
+**Workflow**:
+1. Listen for INIT message with OffscreenCanvas
+2. Create WorixiRenderer with canvas + render config
+3. Send READY message
+4. Listen for RENDER messages in loop
+5. Call workerRenderer.render(sourceFrame, frameIndex, effects)
+6. Send RENDERED message with result canvas
+
+**Key Details**:
+- Uses WorkerPixiRenderer for frame rendering
+- Transfers canvas back via Transferable (zero-copy)
+- Async rendering awaits frame decode completion
+- Error handling: Logs and sends ERROR message
 
 ### Camera PiP Export Pipeline
 

@@ -5,6 +5,7 @@ import { FrameRenderer } from './frameRenderer';
 import { VideoMuxer } from './muxer';
 import { EncodeQueue } from './encode-queue';
 import { PrefetchManager } from './prefetch-manager';
+import { RenderCoordinator } from './render-coordinator';
 import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion, CameraPipConfig } from '@/components/video-editor/types';
 
 interface VideoExporterConfig extends ExportConfig {
@@ -30,6 +31,8 @@ interface VideoExporterConfig extends ExportConfig {
   // Audio tracks
   micAudioUrl?: string;
   systemAudioUrl?: string;
+  // Parallel rendering (4 Web Workers)
+  useParallelRendering?: boolean;
 }
 
 export class VideoExporter {
@@ -59,6 +62,8 @@ export class VideoExporter {
   // Performance telemetry
   private exportStartTime = 0;
   private frameTimings: number[] = [];
+  // Parallel rendering coordinator (optional, enabled via config)
+  private renderCoordinator: RenderCoordinator | null = null;
 
   constructor(config: VideoExporterConfig) {
     this.config = config;
@@ -119,33 +124,69 @@ export class VideoExporter {
       this.decoder = new VideoFileDecoder();
       await this.decoder.loadVideo(this.config.videoUrl);
 
-      // Initialize frame renderer
-      this.renderer = new FrameRenderer({
-        width: this.config.width,
-        height: this.config.height,
-        wallpaper: this.config.wallpaper,
-        zoomRegions: this.config.zoomRegions,
-        showShadow: this.config.showShadow,
-        shadowIntensity: this.config.shadowIntensity,
-        showBlur: this.config.showBlur,
-        motionBlurEnabled: this.config.motionBlurEnabled,
-        borderRadius: this.config.borderRadius,
-        padding: this.config.padding,
-        cropRegion: this.config.cropRegion,
-        videoWidth: videoInfo.width,
-        videoHeight: videoInfo.height,
-        annotationRegions: this.config.annotationRegions,
-        previewWidth: this.config.previewWidth,
-        previewHeight: this.config.previewHeight,
-        // Pass camera PiP config if provided
-        cameraExport: this.config.cameraVideoUrl && this.config.cameraPipConfig
-          ? {
-              videoUrl: this.config.cameraVideoUrl,
-              pipConfig: this.config.cameraPipConfig,
-            }
-          : undefined,
-      });
-      await this.renderer.initialize();
+      // Initialize renderer based on parallel mode config
+      const useParallel = this.config.useParallelRendering ?? false;
+
+      if (useParallel) {
+        // Use RenderCoordinator with worker pool for parallel rendering
+        this.renderCoordinator = new RenderCoordinator({
+          width: this.config.width,
+          height: this.config.height,
+          wallpaper: this.config.wallpaper,
+          zoomRegions: this.config.zoomRegions,
+          showShadow: this.config.showShadow,
+          shadowIntensity: this.config.shadowIntensity,
+          showBlur: this.config.showBlur,
+          motionBlurEnabled: this.config.motionBlurEnabled,
+          borderRadius: this.config.borderRadius,
+          padding: this.config.padding,
+          cropRegion: this.config.cropRegion,
+          videoWidth: videoInfo.width,
+          videoHeight: videoInfo.height,
+          annotationRegions: this.config.annotationRegions,
+          previewWidth: this.config.previewWidth,
+          previewHeight: this.config.previewHeight,
+          cameraExport: this.config.cameraVideoUrl && this.config.cameraPipConfig
+            ? {
+                videoUrl: this.config.cameraVideoUrl,
+                pipConfig: this.config.cameraPipConfig,
+              }
+            : undefined,
+          workerCount: 4, // Fixed at 4 per validation
+          debug: false,
+        });
+        await this.renderCoordinator.initialize();
+        console.log('[VideoExporter] Using parallel rendering mode:', this.renderCoordinator.isParallelMode() ? '4 workers' : 'fallback');
+      } else {
+        // Use single-threaded FrameRenderer (existing behavior)
+        this.renderer = new FrameRenderer({
+          width: this.config.width,
+          height: this.config.height,
+          wallpaper: this.config.wallpaper,
+          zoomRegions: this.config.zoomRegions,
+          showShadow: this.config.showShadow,
+          shadowIntensity: this.config.shadowIntensity,
+          showBlur: this.config.showBlur,
+          motionBlurEnabled: this.config.motionBlurEnabled,
+          borderRadius: this.config.borderRadius,
+          padding: this.config.padding,
+          cropRegion: this.config.cropRegion,
+          videoWidth: videoInfo.width,
+          videoHeight: videoInfo.height,
+          annotationRegions: this.config.annotationRegions,
+          previewWidth: this.config.previewWidth,
+          previewHeight: this.config.previewHeight,
+          // Pass camera PiP config if provided
+          cameraExport: this.config.cameraVideoUrl && this.config.cameraPipConfig
+            ? {
+                videoUrl: this.config.cameraVideoUrl,
+                pipConfig: this.config.cameraPipConfig,
+              }
+            : undefined,
+        });
+        await this.renderer.initialize();
+        console.log('[VideoExporter] Using single-threaded rendering mode');
+      }
 
       // Initialize video encoder
       await this.initializeEncoder();
@@ -175,79 +216,148 @@ export class VideoExporter {
       const frameDuration = 1_000_000 / this.config.frameRate; // in microseconds
       const timeStep = 1 / this.config.frameRate;
 
-      for (let frameIndex = 0; frameIndex < totalFrames && !this.cancelled; frameIndex++) {
-        const frameStartTime = performance.now();
-        const timestamp = frameIndex * frameDuration;
-        const effectiveTimeMs = frameIndex * timeStep * 1000;
+      if (useParallel && this.renderCoordinator) {
+        // Parallel rendering mode: use RenderCoordinator with frame callback
+        this.renderCoordinator.setFrameCallback(async (renderedFrame, frameIdx) => {
+          // Wait for encoder queue space
+          await this.encodeQueueManager.waitForSpace();
 
-        // Get prefetched video element (handles seek timing overlap)
-        const videoElement = await this.prefetchManager!.getFrame(frameIndex, effectiveTimeMs);
-
-        // Create a VideoFrame from the video element (on GPU!)
-        const videoFrame = new VideoFrame(videoElement, {
-          timestamp,
-        });
-
-        // Render the frame with all effects using source timestamp
-        // PrefetchManager already mapped effective -> source time internally
-        const sourceTimeMs = this.mapEffectiveToSourceTime(effectiveTimeMs);
-        const sourceTimestamp = sourceTimeMs * 1000; // Convert to microseconds
-        await this.renderer!.renderFrame(videoFrame, sourceTimestamp);
-
-        videoFrame.close();
-
-        const canvas = this.renderer!.getCanvas();
-
-        // Create VideoFrame from canvas on GPU without reading pixels
-        // @ts-expect-error - colorSpace not in TypeScript definitions but works at runtime
-        const exportFrame = new VideoFrame(canvas, {
-          timestamp,
-          duration: frameDuration,
-          colorSpace: {
-            primaries: 'bt709',
-            transfer: 'iec61966-2-1',
-            matrix: 'rgb',
-            fullRange: true,
-          },
-        });
-
-        // Wait for encoder queue space using Promise-based backpressure (no busy-wait)
-        await this.encodeQueueManager.waitForSpace();
-
-        if (this.encoder && this.encoder.state === 'configured') {
-          try {
-            this.encodeQueueManager.increment();
-            this.encoder.encode(exportFrame, { keyFrame: frameIndex % 150 === 0 });
-          } catch (encodeError) {
-            // Decrement queue on encode failure to prevent queue desync
-            this.encodeQueueManager.onChunkOutput();
-            console.error(`[Frame ${frameIndex}] Encode error:`, encodeError);
-            // Continue export - single frame failure shouldn't halt entire export
+          if (this.encoder && this.encoder.state === 'configured') {
+            try {
+              this.encodeQueueManager.increment();
+              this.encoder.encode(renderedFrame, { keyFrame: frameIdx % 150 === 0 });
+            } catch (encodeError) {
+              this.encodeQueueManager.onChunkOutput();
+              console.error(`[Frame ${frameIdx}] Encode error:`, encodeError);
+            }
           }
-        } else {
-          console.warn(`[Frame ${frameIndex}] Encoder not ready! State: ${this.encoder?.state}`);
+
+          renderedFrame.close();
+        });
+
+        // Submit all frames to coordinator
+        for (let frameIndex = 0; frameIndex < totalFrames && !this.cancelled; frameIndex++) {
+          const frameStartTime = performance.now();
+          const timestamp = frameIndex * frameDuration;
+          const effectiveTimeMs = frameIndex * timeStep * 1000;
+
+          // Get prefetched video element
+          const videoElement = await this.prefetchManager!.getFrame(frameIndex, effectiveTimeMs);
+
+          // Create VideoFrame from video element
+          const videoFrame = new VideoFrame(videoElement, { timestamp });
+
+          // Map effective -> source timestamp for zoom animation
+          const sourceTimeMs = this.mapEffectiveToSourceTime(effectiveTimeMs);
+          const sourceTimestamp = sourceTimeMs * 1000;
+
+          // Submit to coordinator (will be rendered in worker pool)
+          await this.renderCoordinator.renderFrame(videoFrame, sourceTimestamp);
+
+          // Track frame timing
+          this.frameTimings.push(performance.now() - frameStartTime);
+          if (this.frameTimings.length > 1000) {
+            this.frameTimings.shift();
+          }
+
+          // Update progress
+          if (this.config.onProgress) {
+            const avgFrameTime = this.frameTimings.reduce((a, b) => a + b, 0) / this.frameTimings.length;
+            const remainingFrames = totalFrames - frameIndex - 1;
+            const estimatedTimeRemaining = (avgFrameTime * remainingFrames) / 1000;
+
+            this.config.onProgress({
+              currentFrame: frameIndex + 1,
+              totalFrames,
+              percentage: ((frameIndex + 1) / totalFrames) * 100,
+              estimatedTimeRemaining,
+            });
+          }
         }
 
-        exportFrame.close();
+        // Wait for all pending renders to complete
+        await this.renderCoordinator.waitForPending();
+        await this.renderCoordinator.flush();
 
-        // Track frame timing for telemetry (limit to last 1000 samples to prevent unbounded growth)
-        this.frameTimings.push(performance.now() - frameStartTime);
-        if (this.frameTimings.length > 1000) {
-          this.frameTimings.shift();
-        }
+        // Log coordinator stats
+        const coordStats = this.renderCoordinator.getStats();
+        console.log('[VideoExporter] Parallel rendering stats:', coordStats);
+      } else {
+        // Single-threaded mode: existing behavior
+        for (let frameIndex = 0; frameIndex < totalFrames && !this.cancelled; frameIndex++) {
+          const frameStartTime = performance.now();
+          const timestamp = frameIndex * frameDuration;
+          const effectiveTimeMs = frameIndex * timeStep * 1000;
 
-        // Update progress with estimated time remaining
-        if (this.config.onProgress) {
-          const avgFrameTime = this.frameTimings.reduce((a, b) => a + b, 0) / this.frameTimings.length;
-          const remainingFrames = totalFrames - frameIndex - 1;
-          const estimatedTimeRemaining = (avgFrameTime * remainingFrames) / 1000; // in seconds
+          // Get prefetched video element (handles seek timing overlap)
+          const videoElement = await this.prefetchManager!.getFrame(frameIndex, effectiveTimeMs);
 
-          this.config.onProgress({
-            currentFrame: frameIndex + 1,
-            totalFrames,
-            percentage: ((frameIndex + 1) / totalFrames) * 100,
-            estimatedTimeRemaining,
+          // Create a VideoFrame from the video element (on GPU!)
+          const videoFrame = new VideoFrame(videoElement, {
+            timestamp,
           });
+
+          // Render the frame with all effects using source timestamp
+          // PrefetchManager already mapped effective -> source time internally
+          const sourceTimeMs = this.mapEffectiveToSourceTime(effectiveTimeMs);
+          const sourceTimestamp = sourceTimeMs * 1000; // Convert to microseconds
+          await this.renderer!.renderFrame(videoFrame, sourceTimestamp);
+
+          videoFrame.close();
+
+          const canvas = this.renderer!.getCanvas();
+
+          // Create VideoFrame from canvas on GPU without reading pixels
+          // @ts-expect-error - colorSpace not in TypeScript definitions but works at runtime
+          const exportFrame = new VideoFrame(canvas, {
+            timestamp,
+            duration: frameDuration,
+            colorSpace: {
+              primaries: 'bt709',
+              transfer: 'iec61966-2-1',
+              matrix: 'rgb',
+              fullRange: true,
+            },
+          });
+
+          // Wait for encoder queue space using Promise-based backpressure (no busy-wait)
+          await this.encodeQueueManager.waitForSpace();
+
+          if (this.encoder && this.encoder.state === 'configured') {
+            try {
+              this.encodeQueueManager.increment();
+              this.encoder.encode(exportFrame, { keyFrame: frameIndex % 150 === 0 });
+            } catch (encodeError) {
+              // Decrement queue on encode failure to prevent queue desync
+              this.encodeQueueManager.onChunkOutput();
+              console.error(`[Frame ${frameIndex}] Encode error:`, encodeError);
+              // Continue export - single frame failure shouldn't halt entire export
+            }
+          } else {
+            console.warn(`[Frame ${frameIndex}] Encoder not ready! State: ${this.encoder?.state}`);
+          }
+
+          exportFrame.close();
+
+          // Track frame timing for telemetry (limit to last 1000 samples to prevent unbounded growth)
+          this.frameTimings.push(performance.now() - frameStartTime);
+          if (this.frameTimings.length > 1000) {
+            this.frameTimings.shift();
+          }
+
+          // Update progress with estimated time remaining
+          if (this.config.onProgress) {
+            const avgFrameTime = this.frameTimings.reduce((a, b) => a + b, 0) / this.frameTimings.length;
+            const remainingFrames = totalFrames - frameIndex - 1;
+            const estimatedTimeRemaining = (avgFrameTime * remainingFrames) / 1000; // in seconds
+
+            this.config.onProgress({
+              currentFrame: frameIndex + 1,
+              totalFrames,
+              percentage: ((frameIndex + 1) / totalFrames) * 100,
+              estimatedTimeRemaining,
+            });
+          }
         }
       }
 
@@ -661,6 +771,16 @@ export class VideoExporter {
         console.warn('Error destroying prefetch manager:', e);
       }
       this.prefetchManager = null;
+    }
+
+    // Clean up render coordinator (parallel rendering)
+    if (this.renderCoordinator) {
+      try {
+        this.renderCoordinator.terminate();
+      } catch (e) {
+        console.warn('Error terminating render coordinator:', e);
+      }
+      this.renderCoordinator = null;
     }
 
     if (this.decoder) {

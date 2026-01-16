@@ -57,5 +57,16 @@ export default defineConfig({
       }
     },
     chunkSizeWarningLimit: 1000
+  },
+  // Web Worker configuration for parallel rendering
+  worker: {
+    format: 'es',
+    plugins: () => [react()],
+    rollupOptions: {
+      output: {
+        // Workers get their own bundle
+        entryFileNames: 'assets/[name]-worker.[hash].js'
+      }
+    }
   }
 })
