@@ -84,16 +84,31 @@ Optimize OpenScreen's video export pipeline to achieve 5-10x speedup on M4 Macs.
 [Detailed Plan](./phase-01-frame-pipeline-optimization.md)
 
 ### Phase 2: Parallel Rendering via Web Workers
-**Status:** completed | **Effort:** 8h | **Impact:** 3-4x additional | **Completed:** 2026-01-16 19:09
+**Status:** completed | **Effort:** 8h | **Impact:** Infrastructure ready, blocked by video decoding | **Completed:** 2026-01-16 22:19
 
-- OffscreenCanvas in Web Workers
-- Frame batch distribution
-- Zero-copy VideoFrame transfer
-- Worker pool management (4-8 workers)
+- ✅ OffscreenCanvas in Web Workers (PixiJS 8 WebWorkerAdapter)
+- ✅ Zero-copy VideoFrame transfer via Transferables
+- ✅ Worker pool management (4 workers)
+- ✅ Frame reassembler for in-order delivery
+- ✅ Graceful fallback to single-threaded mode
 
-**Files:** new `render-worker.ts`, `worker-pool.ts`, `render-coordinator.ts`
+**Critical Finding:** Workers render in 1-2ms but video frame extraction takes 100-140ms. Bottleneck is `HTMLVideoElement.currentTime` seek, not PixiJS rendering. Workers idle 98% of time waiting for frames.
+
+**Files:** `render-worker.ts`, `worker-pool.ts`, `render-coordinator.ts`, `frame-reassembler.ts`, `worker-pixi-renderer.ts`
 
 [Detailed Plan](./phase-02-parallel-rendering-workers.md)
+
+### Phase 2.5: Fast Frame Extraction (NEW - Required for Parallel Benefit)
+**Status:** pending | **Effort:** 8h | **Impact:** Unlocks 3-4x from parallel workers
+
+- WebCodecs VideoDecoder for direct frame decoding
+- Demux video file without HTMLVideoElement seek latency
+- Decode frames at hardware speed (potentially 10-50x faster)
+- Feed parallel workers at full speed
+
+**Files:** new `video-decoder.ts`, `demuxer.ts`, update `prefetch-manager.ts`
+
+**Why needed:** Current HTMLVideoElement seek takes ~100ms/frame. VideoDecoder can decode at near-realtime speed, enabling workers to process in true parallel.
 
 ### Phase 3: GPU Effects via WebGPU
 **Status:** pending | **Effort:** 4h | **Impact:** 2-3x additional
@@ -114,12 +129,14 @@ Optimize OpenScreen's video export pipeline to achieve 5-10x speedup on M4 Macs.
 
 ## Success Metrics
 
-| Metric | Current | Phase 1 | Phase 2 | Phase 3 |
-|--------|---------|---------|---------|---------|
-| 1 min 1080p30 export | 3-8 min | 1-3 min | 30-60s | 20-40s |
-| Frame time (avg) | 100-250ms | 40-80ms | 15-30ms | 10-20ms |
-| CPU usage | 100% single | 80% single | 60% multi | 40% multi |
-| GPU utilization | <20% | 30% | 50% | 80% |
+| Metric | Current | Phase 1 | Phase 2 | Phase 2.5 | Phase 3 |
+|--------|---------|---------|---------|-----------|---------|
+| 1 min 1080p30 export | 3-8 min | 1-3 min | No change* | 30-60s | 20-40s |
+| Frame time (avg) | 100-250ms | 40-80ms | ~90ms* | 15-30ms | 10-20ms |
+| Worker render time | N/A | N/A | 1-2ms | 1-2ms | <1ms |
+| Frame extraction | ~100ms | ~100ms | ~100ms | ~2ms | ~2ms |
+
+*Phase 2 infrastructure ready but blocked by video decoding bottleneck. Phase 2.5 unlocks the parallel benefit.
 
 ## Risk Assessment
 
