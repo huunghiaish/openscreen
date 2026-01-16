@@ -4,6 +4,67 @@ All notable changes to OpenScreen are documented in this file. The project follo
 
 ## [Unreleased]
 
+### Export Pipeline: Phase 01 - Video Demuxer Implementation (Completed)
+
+#### Added
+- **VideoDemuxer Class** (`src/lib/exporter/video-demuxer.ts`, 320 LOC)
+  - Container format demuxer wrapping mediabunny library
+  - Supports: MP4, WebM, Matroska, QuickTime containers
+  - Extracts EncodedVideoChunks for WebCodecs VideoDecoder consumption
+  - Async iterator interface prevents full-file buffering
+  - Keyframe seeking with timestamp-based lookup
+  - WebCodecs codec validation on initialization
+  - Graceful resource cleanup with destroy() method
+
+- **DemuxerConfig Interface**
+  - `videoUrl: string` - File URL (file:// or http(s)://)
+  - `debug?: boolean` - Enable debug logging
+
+- **DemuxerResult Metadata**
+  - `config: VideoDecoderConfig` - Codec info (codec, dimensions, profile)
+  - `width, height: number` - Video dimensions in pixels
+  - `duration: number` - Total duration in seconds
+  - `frameCount, fps: number` - Estimated frame metrics from packet analysis
+
+- **Factory Function** `createDemuxerFromBlob(blob, options)`
+  - Creates demuxer from File/Blob inputs (user uploads)
+  - Auto-manages object URL lifecycle
+  - Returns initialized demuxer + metadata in single call
+  - Automatic cleanup on error with URL revocation
+
+- **Comprehensive Test Suite** (`src/lib/exporter/video-demuxer.test.ts`, 313 LOC)
+  - Initialization tests: valid codec, unsupported codec, double init
+  - Chunk generation tests: async iteration, endTime boundary
+  - State validation: uninitialized operations, post-destroy states
+  - Resource cleanup: idempotent destroy, URL revocation
+  - Mock mediabunny integration with proper class constructors
+
+#### Technical Details
+
+**Supported Format Priority**:
+```typescript
+[WEBM, MP4, MATROSKA, QTFF]
+```
+
+**Key Methods**:
+- `initialize(): Promise<DemuxerResult>` - Load video, validate codec
+- `getChunksFromTimestamp(startTime?, endTime?): AsyncGenerator` - Extract frames
+- `seekToKeyframe(timestamp): Promise<number | null>` - Find nearest keyframe
+- `getDecoderConfig(): VideoDecoderConfig | null` - Get codec config
+- `isInitialized(): boolean` - Check readiness
+- `destroy(): void` - Cleanup resources
+
+**Memory Management**:
+- Async generators yield chunks on-demand (no buffering)
+- EncodedPacketSink provides decode-order iteration
+- Proper disposal of Input prevents memory leaks
+- Object URL revocation for Blob-sourced videos
+
+**WebCodecs Integration**:
+- `VideoDecoder.isConfigSupported()` validates codec on init
+- Returns codec string (e.g., "vp09.00.10.08", "avc1.42E01E")
+- Throws if codec unsupported on platform
+
 ### Export Optimization: Phase 02 - Parallel Rendering Workers (Completed)
 
 #### Added

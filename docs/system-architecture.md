@@ -300,6 +300,54 @@ Covers:
 
 ## Export Pipeline Architecture
 
+### Phase 1: Video Demuxer (NEW)
+
+The export pipeline now includes a dedicated video demuxer for efficient frame extraction:
+
+**VideoDemuxer Class** (`src/lib/exporter/video-demuxer.ts`, 320 LOC)
+- Wraps mediabunny library for container format handling
+- Supports MP4, WebM, Matroska, QuickTime containers
+- Key responsibilities:
+  1. **Initialization**: Load video file, extract codec metadata, validate with WebCodecs API
+  2. **Frame Extraction**: Async iterator interface yields EncodedVideoChunks in decode order
+  3. **Keyframe Seeking**: Locate nearest keyframe at/before requested timestamp
+  4. **Memory Management**: Async generators prevent full-file buffering
+  5. **Resource Cleanup**: Proper disposal of mediabunny Input and URL resources
+
+**Public API**:
+```typescript
+class VideoDemuxer {
+  async initialize(): Promise<DemuxerResult>
+  async *getChunksFromTimestamp(startTime, endTime): AsyncGenerator<EncodedVideoChunk>
+  async seekToKeyframe(timestamp): Promise<number | null>
+  getDecoderConfig(): VideoDecoderConfig | null
+  isInitialized(): boolean
+  destroy(): void
+}
+
+// Factory for Blob/File inputs
+async function createDemuxerFromBlob(blob): Promise<{ demuxer, result }>
+```
+
+**DemuxerResult Metadata**:
+- `config: VideoDecoderConfig` - Codec info (for WebCodecs setup)
+- `width, height: number` - Video dimensions
+- `duration: number` - Total duration in seconds
+- `frameCount, fps: number` - Estimated frame metrics
+
+**Integration Points**:
+- Used by VideoExporter for reading source video frames
+- Provides EncodedVideoChunk stream for WebCodecs VideoDecoder
+- Supports trim region time mapping via PrefetchManager
+- Factory function handles Blob→URL lifecycle management
+
+**Testing** (313 LOC):
+- Initialization with valid/invalid codecs
+- Chunk generation and endTime boundary testing
+- Keyframe seeking accuracy
+- Resource cleanup (idempotent destroy, URL revocation)
+- Error handling (destroyed state validation)
+
 ### Phase 2: Parallel Rendering Workers
 
 The export pipeline uses Web Workers for parallel frame rendering:

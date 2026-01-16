@@ -215,10 +215,26 @@ const {
 
 **Location**: `src/lib/exporter/`
 
-**Modules**:
+**Core Modules**:
+- `VideoDemuxer` - Container demuxing and frame extraction (Phase 1 - NEW)
 - `VideoExporter` - MP4 export with mediabunny and mp4box
 - `GifExporter` - Animated GIF export with gif.js
 - Frame rendering utilities for image-based exports
+- Parallel rendering with Web Workers (Phase 2)
+- Audio decoders for microphone and system audio mixing
+
+**Video Demuxer** (NEW):
+- Class: `VideoDemuxer` wraps mediabunny for container format handling
+- Supports: MP4, WebM, Matroska, QuickTime containers
+- Key methods:
+  - `initialize()` - Load video, extract metadata and decoder config
+  - `getChunksFromTimestamp()` - Async iterator yielding EncodedVideoChunks
+  - `seekToKeyframe()` - Find nearest keyframe at/before timestamp
+  - `getDecoderConfig()` - Get VideoDecoderConfig for WebCodecs
+  - `destroy()` - Clean up mediabunny resources
+- Factory: `createDemuxerFromBlob()` - Create demuxer from File/Blob with auto URL revocation
+- Returns metadata: width, height, duration, fps, frameCount
+- Tested: 313-line test suite with mock mediabunny
 
 **Formats Supported**:
 - MP4 (H.264 video codec, AAC audio)
