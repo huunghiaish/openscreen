@@ -98,7 +98,7 @@ export class VideoExporter {
         videoUrl: this.config.videoUrl,
         frameRate: this.config.frameRate,
         trimRegions: this.config.trimRegions,
-        debug: false,
+        debug: true, // Enable debug to see why WebCodecs might fail
       });
       this.frameSource = frameSource;
       console.log(`[VideoExporter] Using ${videoInfo.mode} frame source`);
@@ -226,14 +226,17 @@ export class VideoExporter {
           const effectiveTimeMs = frameIndex * timeStep * 1000;
 
           // Get video frame from FrameSource (WebCodecs or HTMLVideo fallback)
-          // FrameSource returns VideoFrame directly with correct timestamp
+          // OWNERSHIP: FrameSource transfers ownership to caller
           const videoFrame = await this.frameSource!.getFrame(frameIndex, effectiveTimeMs);
 
           // Map effective -> source timestamp for zoom animation
           const sourceTimeMs = this.mapEffectiveToSourceTime(effectiveTimeMs);
           const sourceTimestamp = sourceTimeMs * 1000;
 
-          // Submit to coordinator (will be rendered in worker pool)
+          // Submit to coordinator for parallel rendering
+          // OWNERSHIP: renderFrame() transfers the VideoFrame to a Web Worker via postMessage.
+          // The frame is automatically detached (neutered) on this thread, and the worker
+          // closes it after rendering. No manual close() needed here.
           await this.renderCoordinator.renderFrame(videoFrame, sourceTimestamp);
 
           // Track frame timing
@@ -274,6 +277,7 @@ export class VideoExporter {
           const effectiveTimeMs = frameIndex * timeStep * 1000;
 
           // Get video frame from FrameSource (WebCodecs or HTMLVideo fallback)
+          // OWNERSHIP: FrameSource transfers ownership to caller
           const videoFrame = await this.frameSource!.getFrame(frameIndex, effectiveTimeMs);
 
           // Render the frame with all effects using source timestamp
@@ -281,6 +285,7 @@ export class VideoExporter {
           const sourceTimestamp = sourceTimeMs * 1000; // Convert to microseconds
           await this.renderer!.renderFrame(videoFrame, sourceTimestamp);
 
+          // OWNERSHIP: We own the frame, close it after rendering
           videoFrame.close();
 
           const canvas = this.renderer!.getCanvas();

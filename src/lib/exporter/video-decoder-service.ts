@@ -30,6 +30,12 @@ export interface DecoderServiceConfig {
 export type FrameCallback = (frame: VideoFrame, timestamp: number) => void;
 
 /**
+ * Callback type for decoder errors
+ * @param error - The error that occurred
+ */
+export type ErrorCallback = (error: Error) => void;
+
+/**
  * Decoder performance statistics
  */
 export interface DecoderStats {
@@ -69,6 +75,7 @@ export interface DecoderStats {
 export class VideoDecoderService {
   private decoder: VideoDecoder | null = null;
   private frameCallback: FrameCallback | null = null;
+  private errorCallback: ErrorCallback | null = null;
   private readonly maxQueueSize: number;
   private readonly debug: boolean;
 
@@ -240,6 +247,15 @@ export class VideoDecoderService {
   }
 
   /**
+   * Set the callback for decoder errors
+   * Called when the VideoDecoder encounters an error (async error path)
+   * @param callback - Called when an error occurs
+   */
+  setErrorCallback(callback: ErrorCallback): void {
+    this.errorCallback = callback;
+  }
+
+  /**
    * Get decoder performance statistics
    */
   getStats(): DecoderStats {
@@ -314,6 +330,11 @@ export class VideoDecoderService {
     this.framesDropped++;
     this.log(`Decoder error: ${error.name} - ${error.message}`);
     this.clearWaitingResolvers();
+
+    // Notify error callback (allows WebCodecsFrameSource to propagate errors)
+    if (this.errorCallback) {
+      this.errorCallback(error);
+    }
   }
 
   /**

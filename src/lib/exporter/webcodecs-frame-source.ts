@@ -49,8 +49,22 @@ export class WebCodecsFrameSource implements FrameSource {
 
   // Frame waiting - keyed by frame index for exact matching
   private frameWaiters: Map<number, Array<() => void>> = new Map();
-  // Track decoded frame indices for waiter notification
-  private lastDecodedFrameIndex = -1;
+
+  // Decode index counter - tracks which frame number we're on
+  private nextDecodeIndex = 0;
+  // Total frames decoded (for knowing when source is exhausted)
+  private totalDecodedFrames = 0;
+  // Last frame cache - used to return when export requests beyond source frames
+  private lastFrame: VideoFrame | null = null;
+
+  // Pending frame queue - absorbs burst from decoder when buffer is full
+  // Each entry is [frame, decodeIndex] tuple to preserve index association
+  private pendingFrames: Array<[VideoFrame, number]> = [];
+  private pendingWaiters: Array<() => void> = [];
+  // Large pending queue (32) to absorb decoder callback bursts
+  // Combined with buffer (16), total capacity = 48 frames
+  // With headroom of 10, we allow decoding when totalFrames <= 38
+  private readonly maxPendingFrames = 32;
 
   constructor(config: FrameSourceConfig) {
     this.config = config;
@@ -73,8 +87,11 @@ export class WebCodecsFrameSource implements FrameSource {
     this.log(`Demuxer initialized: ${this.demuxerResult.width}x${this.demuxerResult.height}, ${this.demuxerResult.fps}fps`);
 
     // 2. Configure decoder
+    // IMPORTANT: Keep maxQueueSize low (2) to limit "in-flight" frames
+    // Higher values cause frame flooding via async callbacks that overflow
+    // the pending queue before backpressure can take effect
     this.decoder = new VideoDecoderService({
-      maxQueueSize: 8,
+      maxQueueSize: 2,
       debug: this.debug,
     });
 
@@ -90,15 +107,46 @@ export class WebCodecsFrameSource implements FrameSource {
       debug: this.debug,
     });
 
-    // 4. Wire decoder output to buffer
+    // 4. Wire decoder output to buffer (with pending queue for backpressure)
     this.decoder.setFrameCallback((frame) => {
-      this.buffer!.addFrame(frame);
-      // Convert timestamp to frame index and notify waiters
-      this.lastDecodedFrameIndex++;
-      this.notifyFrameWaiters(this.lastDecodedFrameIndex);
+      // Check if we're aborting (don't add frames during shutdown)
+      if (this.decodeAheadAbort) {
+        frame.close();
+        return;
+      }
+
+      // Get the decode index for this frame (frames arrive in decode order)
+      const decodeIndex = this.nextDecodeIndex++;
+
+      // Try to add to buffer first, use pending queue as overflow
+      if (this.buffer!.isFull()) {
+        // Buffer full - use pending queue with decode index
+        if (this.pendingFrames.length < this.maxPendingFrames) {
+          this.pendingFrames.push([frame, decodeIndex]);
+          this.log(`Queued pending frame ${decodeIndex} at ${frame.timestamp}µs (${this.pendingFrames.length} pending)`);
+        } else {
+          // Both buffer and pending queue full - this indicates backpressure failure
+          this.log(`ERROR: Dropping frame ${decodeIndex} at ${frame.timestamp}µs - both buffer and pending queue full`);
+          frame.close();
+          return;
+        }
+        // Don't notify waiters for pending frames - they'll be notified when drained to buffer
+      } else {
+        this.buffer!.addFrame(frame, decodeIndex);
+        // Notify ALL waiters when any frame is added to buffer
+        this.notifyAllWaiters();
+      }
     });
 
-    // 5. Start decode-ahead loop
+    // 5. Wire decoder error callback to propagate async errors
+    this.decoder.setErrorCallback((error) => {
+      this.log('Decoder error callback:', error.message);
+      this.decodeError = error;
+      // Notify all waiters so they can check decodeError and throw
+      this.notifyAllWaiters();
+    });
+
+    // 6. Start decode-ahead loop
     this.startDecodeAhead();
 
     // Calculate effective duration using TrimTimeMapper
@@ -129,15 +177,23 @@ export class WebCodecsFrameSource implements FrameSource {
 
     // Wait for frame to be available in buffer
     while (!this.buffer.hasFrame(frameIndex)) {
+      // Check if decode-ahead already completed BEFORE waiting
+      // This prevents deadlock when waiter is added after notifyAllWaiters() was called
+      if (this.decodeAheadTask === null) {
+        // Source video exhausted - return clone of last frame if available
+        // This handles when export frame rate > source frame rate
+        if (this.lastFrame && frameIndex >= this.totalDecodedFrames) {
+          this.log(`Frame ${frameIndex} beyond source (${this.totalDecodedFrames} frames), returning last frame clone`);
+          // Clone the last frame to return (VideoFrame can only be consumed once)
+          return this.cloneFrame(this.lastFrame);
+        }
+        throw new Error(`Frame ${frameIndex} not available (decode completed with ${this.totalDecodedFrames} frames, source time: ${sourceTimeMs.toFixed(1)}ms)`);
+      }
+
       await this.waitForFrame(frameIndex);
 
-      // Check for decoder error after waiting (re-check since async operation may have set it)
+      // Check for decoder error after waiting
       this.throwIfError();
-
-      // Safety check: if decode-ahead completed and frame still not found
-      if (this.decodeAheadTask === null && !this.buffer.hasFrame(frameIndex)) {
-        throw new Error(`Frame ${frameIndex} not available (decode completed, source time: ${sourceTimeMs.toFixed(1)}ms)`);
-      }
     }
 
     // Consume frame from buffer
@@ -145,6 +201,16 @@ export class WebCodecsFrameSource implements FrameSource {
     if (!frame) {
       throw new Error(`Frame ${frameIndex} disappeared from buffer`);
     }
+
+    // Cache this frame as potential last frame (for hold-last-frame when source exhausted)
+    // Close previous cached frame if exists
+    if (this.lastFrame) {
+      this.lastFrame.close();
+    }
+    this.lastFrame = this.cloneFrame(frame);
+
+    // Drain pending frames into buffer now that there's space
+    this.drainPendingFrames();
 
     // Update stats
     const retrievalTime = performance.now() - startTime;
@@ -188,13 +254,40 @@ export class WebCodecsFrameSource implements FrameSource {
       this.demuxer = null;
     }
 
+    // Close pending frames to release GPU memory
+    for (const [frame] of this.pendingFrames) {
+      try {
+        frame.close();
+      } catch {
+        // Frame may already be closed
+      }
+    }
+    this.pendingFrames = [];
+    this.nextDecodeIndex = 0;
+    this.totalDecodedFrames = 0;
+
+    // Close cached last frame
+    if (this.lastFrame) {
+      try {
+        this.lastFrame.close();
+      } catch {
+        // Frame may already be closed
+      }
+      this.lastFrame = null;
+    }
+
     // Notify all waiters so they can exit (they will check decodeError or return immediately)
     this.notifyAllWaiters();
+
+    // Resolve pending space waiters to avoid deadlock
+    for (const resolve of this.pendingWaiters) {
+      resolve();
+    }
+    this.pendingWaiters = [];
 
     this.decodeAheadTask = null;
     this.demuxerResult = null;
     this.decodeError = null;
-    this.lastDecodedFrameIndex = -1;
   }
 
   getStats(): FrameSourceStats {
@@ -207,6 +300,8 @@ export class WebCodecsFrameSource implements FrameSource {
       modeStats: {
         decoder: this.decoder?.getStats() ?? null,
         buffer: this.buffer?.getStats() ?? null,
+        pendingQueueSize: this.pendingFrames.length,
+        pendingQueueMax: this.maxPendingFrames,
       },
     };
   }
@@ -235,8 +330,8 @@ export class WebCodecsFrameSource implements FrameSource {
             break;
           }
 
-          // Backpressure: wait for buffer space
-          await this.buffer!.waitForSpace();
+          // Backpressure: wait for space in buffer OR pending queue
+          await this.waitForFrameSpace();
 
           // Check for abort again after waiting
           if (this.decodeAheadAbort) {
@@ -252,7 +347,9 @@ export class WebCodecsFrameSource implements FrameSource {
           await this.decoder.flush();
         }
 
-        this.log('Decode-ahead complete');
+        // Record total decoded frames for end-of-video handling
+        this.totalDecodedFrames = this.nextDecodeIndex;
+        this.log(`Decode-ahead complete: ${this.totalDecodedFrames} frames decoded`);
       } catch (error) {
         // Store error to propagate to getFrame() callers
         this.decodeError = error instanceof Error ? error : new Error(String(error));
@@ -263,6 +360,71 @@ export class WebCodecsFrameSource implements FrameSource {
         this.notifyAllWaiters();
       }
     })();
+  }
+
+  /**
+   * Check if we can accept more frames (buffer + pending with headroom for in-flight)
+   *
+   * We need significant headroom because decoder callbacks fire asynchronously in bursts.
+   * The decoder pipeline has multiple stages: queued chunks + actively decoding chunk.
+   * All these can fire callbacks rapidly between our checks.
+   *
+   * With decoder queue=2 and 1 actively decoding, up to 6+ frames can arrive in a burst.
+   * We use headroom of 10 to be safe.
+   */
+  private canAcceptFrame(): boolean {
+    if (!this.buffer) return false;
+    const totalFrames = this.buffer.size + this.pendingFrames.length;
+    const totalCapacity = this.buffer.getStats().maxSize + this.maxPendingFrames;
+    // Reserve 10 slots for in-flight frames (decoder burst can be 6+ frames)
+    const headroom = 10;
+    return totalFrames <= totalCapacity - headroom;
+  }
+
+  /**
+   * Wait for space to accept a new frame (in buffer or pending queue).
+   * Returns immediately if space available, otherwise waits until frame consumed.
+   */
+  private async waitForFrameSpace(): Promise<void> {
+    if (this.canAcceptFrame()) {
+      return;
+    }
+
+    this.log(`Waiting for frame space (buffer: ${this.buffer?.size}/${this.buffer?.getStats().maxSize}, pending: ${this.pendingFrames.length}/${this.maxPendingFrames})`);
+
+    return new Promise<void>(resolve => {
+      this.pendingWaiters.push(resolve);
+    });
+  }
+
+  /**
+   * Notify pending waiters when frame space becomes available
+   */
+  private notifyPendingWaiters(): void {
+    while (this.pendingWaiters.length > 0 && this.canAcceptFrame()) {
+      const resolve = this.pendingWaiters.shift()!;
+      resolve();
+    }
+  }
+
+  /**
+   * Drain pending frames into buffer when space becomes available.
+   * Called after consuming a frame from buffer.
+   */
+  private drainPendingFrames(): void {
+    let drained = false;
+    while (this.pendingFrames.length > 0 && !this.buffer!.isFull()) {
+      const [frame, decodeIndex] = this.pendingFrames.shift()!;
+      this.buffer!.addFrame(frame, decodeIndex);
+      this.log(`Drained pending frame ${decodeIndex} at ${frame.timestamp}µs to buffer (${this.pendingFrames.length} remaining)`);
+      drained = true;
+    }
+    // Notify ALL waiters if any frames were drained to buffer
+    if (drained) {
+      this.notifyAllWaiters();
+    }
+    // Notify decode-ahead that there's space now
+    this.notifyPendingWaiters();
   }
 
   /**
@@ -292,38 +454,22 @@ export class WebCodecsFrameSource implements FrameSource {
   }
 
   /**
-   * Notify waiters when a frame arrives
-   * @param decodedFrameIndex - Index of the frame that was just decoded
-   */
-  private notifyFrameWaiters(decodedFrameIndex: number): void {
-    // Notify exact match for this frame index
-    const waiters = this.frameWaiters.get(decodedFrameIndex);
-    if (waiters && waiters.length > 0) {
-      for (const resolve of waiters) {
-        resolve();
-      }
-      this.frameWaiters.delete(decodedFrameIndex);
-    }
-
-    // Also notify waiters for earlier frames (in case of out-of-order processing)
-    // This handles edge cases where frames arrive slightly out of order
-    for (const [idx, idxWaiters] of this.frameWaiters.entries()) {
-      if (idx <= decodedFrameIndex && idxWaiters.length > 0) {
-        for (const resolve of idxWaiters) {
-          resolve();
-        }
-        this.frameWaiters.delete(idx);
-      }
-    }
-  }
-
-  /**
    * Throw if a decode error has occurred
    */
   private throwIfError(): void {
     if (this.decodeError !== null) {
       throw new Error(`Decoder failed: ${this.decodeError.message}`);
     }
+  }
+
+  /**
+   * Clone a VideoFrame for reuse (e.g., hold-last-frame when source exhausted)
+   */
+  private cloneFrame(frame: VideoFrame): VideoFrame {
+    return new VideoFrame(frame, {
+      timestamp: frame.timestamp,
+      duration: frame.duration ?? undefined,
+    });
   }
 
   /**
